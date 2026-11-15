@@ -80,7 +80,7 @@ void hle_3ds_pad_map_sticks(int16_t circle_x, int16_t circle_y, int16_t cstick_x
 uint16_t hle_3ds_pad_map_old(uint32_t keys, int16_t circle_x, int16_t circle_y, uint8_t sticks[4])
 {
     const uint32_t pad = KEY_DUP | KEY_DDOWN | KEY_DLEFT | KEY_DRIGHT;
-    const uint32_t chords = pad | KEY_L | KEY_R;
+    const uint32_t chords = pad | KEY_L | KEY_R | KEY_A | KEY_X;
     /* The Old model has no ZL/ZR; ignore those bits even when testing on New hardware. */
     uint16_t buttons = hle_3ds_pad_map_buttons(keys & ~(KEY_ZL | KEY_ZR));
     hle_3ds_pad_map_sticks(circle_x, circle_y, 0, 0, sticks);
@@ -88,6 +88,8 @@ uint16_t hle_3ds_pad_map_old(uint32_t keys, int16_t circle_x, int16_t circle_y, 
         if (keys & chords) buttons &= ~(1u << 0); /* consume SELECT only for a modifier chord */
         if (keys & KEY_L) { buttons &= ~(1u << 10); buttons |= 1u << 8; }
         if (keys & KEY_R) { buttons &= ~(1u << 11); buttons |= 1u << 9; }
+        if (keys & KEY_A) { buttons &= ~(1u << 14); buttons |= 1u << 1; }
+        if (keys & KEY_X) { buttons &= ~(1u << 13); buttons |= 1u << 2; }
     } else {
         buttons &= ~(0xFu << 4);
         if (sticks) {

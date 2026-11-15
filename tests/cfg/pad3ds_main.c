@@ -48,6 +48,9 @@ int main(void)
     assert(hle_3ds_pad_map_old(KEY_SELECT | KEY_DLEFT, 0, 0, sticks) == (1u << 7));
     assert(sticks[0] == 128 && sticks[1] == 128);
     assert(hle_3ds_pad_map_old(KEY_SELECT | KEY_L | KEY_R, 0, 0, sticks) == ((1u << 8) | (1u << 9)));
+    assert(hle_3ds_pad_map_old(KEY_SELECT | KEY_A, 0, 0, sticks) == (1u << 1));
+    assert(hle_3ds_pad_map_old(KEY_SELECT | KEY_X, 0, 0, sticks) == (1u << 2));
+    assert(hle_3ds_pad_map_old(KEY_SELECT | KEY_A | KEY_X, 0, 0, sticks) == ((1u << 1) | (1u << 2)));
     assert(hle_3ds_pad_map_old(KEY_L | KEY_R, 0, 0, sticks) == ((1u << 10) | (1u << 11)));
     assert(hle_3ds_pad_map_old(KEY_SELECT, 0, 0, sticks) == 1u);
     assert(hle_3ds_pad_map_old(KEY_ZL | KEY_ZR | KEY_DUP | KEY_DDOWN, 0, 0, sticks) == 0);

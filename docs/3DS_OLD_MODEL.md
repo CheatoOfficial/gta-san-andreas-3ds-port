@@ -53,6 +53,7 @@ New-model builds refuse old hardware with an explanatory message. New 3DS speedu
 | SELECT + D-pad | Guest digital D-pad; SELECT is consumed |
 | L / R | L1 / R1 |
 | SELECT + L / R | L2 / R2; SELECT and the first shoulder are consumed |
+| SELECT + A / X | L3 / R3 stick clicks; SELECT and the face button are consumed |
 | SELECT alone | SELECT |
 | A / X / B / Y | Cross / Circle / Square / Triangle |
 | START | START |
