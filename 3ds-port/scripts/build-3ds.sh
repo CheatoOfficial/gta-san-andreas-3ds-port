@@ -83,6 +83,12 @@ find "$BDIR/obj" -type f \( -name hle_3ds_main.o -o -name hle_main.o -o -name hl
   -o -name w3d_citro3d_adapter.o -o -name hle_iop_servers.o -o -name audio_3ds.o -o -name hle_dev_pad_probe.o \) \
   -delete 2>/dev/null || true
 
+# The 3DS texture cache reuses PS2RC's PS2-texture converter, which lives in the pack's psp/ source folder
+# (mk/build.sh only copies a pack source folder's own 3ds/ subfolder for this target).
+for f in texconv.c texconv.h; do
+  cp -p "$REPO/games/$PACK/engine/render/psp/$f" "$BDIR/hle/$f"
+done
+
 cd "$REPO"
 bash mk/build.sh --pack "$PACK" 3ds "$JOBS"
 
