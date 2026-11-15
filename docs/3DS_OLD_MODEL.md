@@ -63,8 +63,9 @@ Release builds are needed to test physical controls; profile builds use the scri
 
 ## Acceptance checks still required
 
-1. Build the full Old-model release and profile from private local conversion outputs. Record image/BSS sizes and both heap sizes.
-2. Run the matching binary in Old-model Azahar, verify startup/intro/city, and compare omitted geometry and texture refusals.
+1. ~~Build the full Old-model release from private local conversion outputs~~ and ~~run it in Old-model Azahar~~: done
+   2026-11-15, it boots and draws the city with heavy texture loss (see 3DS_STATUS.md). Still to do: the profile build,
+   and a texture-cache policy that keeps the scene recognisable within the Old-model memory limits.
 3. On Old 3DS/Old 3DS XL/original 2DS, verify boot and sustained allocation headroom under the documented launcher setup.
 4. Check every modifier and camera direction in a release build, then audio and sustained gameplay.
 5. Share only the reviewed allowlisted timing summary from `summarize-log.py`; never upload the game build, captures or raw log.

@@ -2,6 +2,24 @@
 
 Updated 2026-11-15. Read `AGENTS.md` first. This document contains source-only status and no private run evidence.
 
+## Claude update (2026-11-15, after merging PR #1)
+
+- PR #1 merged into `main`. `ps2rc3ds.py test` passes on `main` (5 host executables, 6,000 equivalence cases,
+  11 Python tests, source and history guard).
+- Full translated-game builds of **both** models linked from a clean clone (private local conversion outputs, not in
+  git): New text 11.57 MB / BSS 13.64 MB; Old text 11.57 MB / BSS 6.58 MB.
+- Azahar runs of each release build (about 4 minutes each): the New build in New 3DS mode reached city frames with the
+  same triangle counts as before the merge and no texture omissions. The Old build in Old 3DS mode booted
+  (normal heap 72,352 KiB, linear 8,192 KiB) and drew city frames, but with up to 171 texture omissions per sampled frame,
+  ~43,000 refused texture decodes and the linear heap down to ~0.8 MB. Numbers are in `docs/3DS_STATUS.md`.
+- The user asked for one build that runs on both models with New 3DS speedups. That is NOT done: the models are still
+  separate builds (compile-time capacities, and `__ctru_linear_heap_size` must be fixed before `main`). A single binary
+  needs runtime-sized renderer buffers and a custom `__system_allocateHeaps` that chooses the linear/normal split from
+  the application memory size. Next owner: decide whether to do that, and give the Old profile a texture policy that
+  keeps scenes recognisable within its memory (smaller/downscaled textures rather than refusals).
+- The user authorised making the repository public when ready. Claude judged the source ready as an experimental,
+  not-playable project with these limits stated, and changed visibility after this update (see git history / repo settings).
+
 ## User objective and publication decision
 
 The user requested checks of the pre-publication fixes, Old 3DS compatibility and shared Codex/Claude project instructions.

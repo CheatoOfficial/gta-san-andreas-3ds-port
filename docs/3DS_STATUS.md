@@ -56,6 +56,21 @@ This is **not a full translated-game link or runtime validation**. All performan
 and describe New-model emulator observations. Old-model startup, memory headroom, scene completeness, controls,
 audio and speed remain unverified. See [3DS_OLD_MODEL.md](3DS_OLD_MODEL.md) for the acceptance plan.
 
+**Full builds and emulator runs (2026-11-15, after merging the profile):** both models were built from a clean clone
+and private local conversion outputs, and each matching release build was run in Azahar for about 4 minutes.
+
+| | New-model build, New 3DS mode | Old-model build, Old 3DS mode |
+|---|---|---|
+| Linked image (text / BSS) | 11.57 MB / 13.64 MB | 11.57 MB / 6.58 MB |
+| Heap at start (normal / linear) | 69,556 / 32,768 KiB | 72,352 / 8,192 KiB |
+| Reached | city frames (1680+), same triangle counts as before the merge | city frames (2160+) |
+| Texture omissions per sampled frame | 0 | up to 171; texture decodes refused ~43,000 times, linear heap down to ~0.8 MB |
+| Frame pacing (between presents + submit) | ~200-340 ms | ~120-270 ms (fewer textures and vertices drawn) |
+
+The Old-model build therefore boots and renders in the emulator, but with heavy texture loss: its 2 MiB texture cache
+and 8 MiB linear heap are too small for this scene. Azahar's Old 3DS mode gave the homebrew 72 MiB of normal heap,
+which a real Old 3DS homebrew launch may not, so these numbers do not establish real old-hardware memory headroom.
+
 ## Known issues from the pre-publication review (2026-11-15)
 
 * Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a
