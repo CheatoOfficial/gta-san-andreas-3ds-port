@@ -18,7 +18,7 @@ MODE="${MODE:-release}"
 MODEL="${MODEL:-new3ds}"
 case "$MODEL" in
   new3ds) OLD_MODEL=0; BUILD_SUFFIX=""; DEFAULT_TEXTURE_SLOTS=384; DEFAULT_TEXTURE_KB=20480 ;;
-  old3ds) OLD_MODEL=1; BUILD_SUFFIX="-old3ds"; DEFAULT_TEXTURE_SLOTS=128; DEFAULT_TEXTURE_KB=2048 ;;
+  old3ds) OLD_MODEL=1; BUILD_SUFFIX="-old3ds"; DEFAULT_TEXTURE_SLOTS=512; DEFAULT_TEXTURE_KB=2048 ;;
   *) echo "MODEL must be new3ds or old3ds" >&2; exit 1 ;;
 esac
 BDIR="${BDIR:-$REPO/3ds-work/build-3ds$BUILD_SUFFIX}"
@@ -55,8 +55,8 @@ export BDIR PROFILE=public AUDIO=1 HLE_BUILD="${HLE_BUILD:-100}"
 # ---- build options ---------------------------------------------------------------------------------------------
 TEXTURE_SLOTS="${HLE_3DS_TEXTURE_SLOTS:-$DEFAULT_TEXTURE_SLOTS}"
 TEXTURE_BUDGET_KB="${HLE_3DS_TEXTURE_BUDGET_KB:-$DEFAULT_TEXTURE_KB}"
-if [ "$MODEL" = old3ds ] && { [ "$TEXTURE_BUDGET_KB" -gt 2048 ] || [ "$TEXTURE_SLOTS" -gt 128 ]; }; then
-  echo "Old 3DS profile supports at most 2048 KiB textures and 128 slots" >&2; exit 1
+if [ "$MODEL" = old3ds ] && { [ "$TEXTURE_BUDGET_KB" -gt 2048 ] || [ "$TEXTURE_SLOTS" -gt 512 ]; }; then
+  echo "Old 3DS profile supports at most 2048 KiB textures and 512 slots" >&2; exit 1
 fi
 DEFS="-DHLE_3DS_OLD_MODEL=$OLD_MODEL -DHLE_3DS_SKY_PASS=${HLE_3DS_SKY_PASS:-1} -DHLE_3DS_TEX_SLOTS=$TEXTURE_SLOTS -DHLE_3DS_TEX_MAX_BYTES=$((TEXTURE_BUDGET_KB * 1024))u"
 DEFS="$DEFS -DHLE_3DS_LIGHTING_DEBUG=0 -DHLE_3DS_DISABLE_DEPTH_DEBUG=0 -DHLE_3DS_DISABLE_CULL_DEBUG=0"

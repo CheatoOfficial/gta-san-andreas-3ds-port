@@ -14,6 +14,8 @@ typedef struct {
 
 int hle_3ds_texture_prepare(uint32_t raster, int *alpha_class);
 const Hle3dsTexture *hle_3ds_texture_get(uint32_t raster);
+int hle_3ds_texture_prepare_2d(uint32_t raster);
+const Hle3dsTexture *hle_3ds_texture_get_2d(uint32_t raster);
 void hle_3ds_texture_frame_reset(void);
 void hle_3ds_texture_gpu_synced(void);
 void hle_3ds_texture_forget(uint32_t raster);

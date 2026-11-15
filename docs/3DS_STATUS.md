@@ -1,6 +1,6 @@
 # 3DS port status and measurements
 
-Last updated 2026-11-15. All numbers come from the Azahar emulator (New 3DS mode, JIT, 100% clock, vsync on) on a
+Last updated 2026-11-15. Unless marked otherwise, numbers come from the Azahar emulator (New 3DS mode, JIT, 100% clock, vsync on) on a
 Windows PC, using a scripted pad route. **Nothing has been run on real hardware.** Emulator timing of float-heavy
 code is probably pessimistic compared with a real ARM11 with VFP.
 
@@ -47,16 +47,15 @@ is tight: linear heap free dips under 1 MB in Azahar), and the Old 3DS family. N
 
 ## Old-model profile (2026-11-15)
 
-`--model old3ds` selects smaller bounded CPU/GPU buffers, a 2 MiB texture cache, an 8 MiB linear heap reservation
+`--model old3ds` selects smaller bounded CPU/GPU buffers, a 2 MiB compact texture cache, an 8 MiB linear heap reservation
 and modifier controls for consoles without ZL/ZR or a C-stick. The model has a separate object directory and named
 artifacts; staging and Azahar also accept `--model old3ds`.
 
-Both profiles pass the game-free host checks and native ARM11 compilation against the installed SDK.
-This is **not a full translated-game link or runtime validation**. All performance figures above predate this profile
-and describe New-model emulator observations. Old-model startup, memory headroom, scene completeness, controls,
-audio and speed remain unverified. See [3DS_OLD_MODEL.md](3DS_OLD_MODEL.md) for the acceptance plan.
+Both profiles have full-build and emulator observations below. All performance figures above predate this profile
+and describe New-model observations. Real-hardware memory headroom, controls, audio and speed remain unverified.
+See [3DS_OLD_MODEL.md](3DS_OLD_MODEL.md) for the acceptance plan.
 
-**Full builds and emulator runs (2026-11-15, after merging the profile):** both models were built from a clean clone
+**Baseline full builds and emulator runs (`20bee84`, before compact textures):** both models were built from a clean clone
 and private local conversion outputs, and each matching release build was run in Azahar for about 4 minutes.
 
 | | New-model build, New 3DS mode | Old-model build, Old 3DS mode |
@@ -71,18 +70,58 @@ The Old-model build therefore boots and renders in the emulator, but with heavy 
 and 8 MiB linear heap are too small for this scene. Azahar's Old 3DS mode gave the homebrew 72 MiB of normal heap,
 which a real Old 3DS homebrew launch may not, so these numbers do not establish real old-hardware memory headroom.
 
+## Compact textures and draw-budget correction (2026-11-15)
+
+Full New release, Old release and Old profile builds linked from private local conversion outputs. The final Old profile
+(scripted input/captures, requested 300-second cap) and New release were run in separate fresh portable Azahar profiles,
+with the matching hardware mode, JIT, 100% clock and vsync. They ran concurrently for correctness checks; these are not
+comparable speed benchmarks. Tested artifact hashes matched the final local build outputs.
+
+| Observation | Old profile / Old mode | New release / New mode |
+|---|---:|---:|
+| Last sampled world frame | 2040 | 2280 |
+| Maximum texture omissions in sampled reports | 0 | 0 |
+| Last reported texture decode/refusal failures | 0 | 11 (all pinned-cache refusals) |
+| Last reported cache / peak | 1880 / 2048 KiB | 7670 / 7766 KiB |
+| Minimum sampled linear heap free | 219 KiB (capture build) | 13,295 KiB |
+| Normal / linear heap at startup | 73,276 / 8192 KiB | 69,548 / 32,768 KiB |
+| Fatal log entries observed | 0 | 0 |
+
+The earlier Old release reported up to 171 omissions per sampled frame and roughly 43,000 refused decodes. The new Old
+profile keeps its 2 MiB limit but uses 512 metadata slots, bounded smaller images and 16-bit texels. World images are up
+to 64 pixels / 8 KiB and HUD copies up to 128 pixels / 32 KiB. Local diagnostic captures showed the player, textured
+environment, minimap and readable HUD text; no game captures are published here. Detail/color precision is lower than
+New-model RGBA8. Old release BSS is now 5,637,424 bytes (about 5.64 MB); its decode scratch alone shrank by 983,040 bytes.
+
+Raster lifecycle/unlock hooks now invalidate cache copies and defer freeing busy GPU snapshots. Header dimension/format
+changes also invalidate a hit. New draws can temporarily be refused while an old snapshot is busy; zero sampled omissions
+does not mean no transient omission occurred. Writes bypassing these hooks still need investigation if stale images recur.
+
+A separate static-budget bug reserved all remaining frame vertices before returning for a skipped mesh. The budget check
+now runs first, leaving capacity for later immediate/lit draws. A synthetic regression fails against the old production
+backend and passes after the fix. Earlier inflated input counts must not be treated as fully drawn geometry. Draw-order
+budget omission and real vertex/batch limits remain; the correction does not eliminate every skipped mesh.
+
+A fresh emulator profile also exposed a startup path mismatch: staging places the boot ELF at the runtime root, but the
+loader searched inside disc/. The loader now follows the staging layout, and both fresh-profile runs passed startup.
+
+No real hardware was tested. Old-mode Azahar still provides more normal heap than a real Old launch may provide, and the
+capture build's linear headroom is small. These runs establish neither whole-game playability nor hardware compatibility.
+
 ## Known issues from the pre-publication review (2026-11-15)
 
 * Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a
   submitted frame stay protected until that frame completes; stereo audio buffers report frames, not halfwords; the ELF
   loader rejects segments with file size above memory size; palette reads are bounds-checked; raw guest bytes are no
-  longer logged. None of these fixes could be validated on real hardware (Azahar neither exercises NDSP nor the GPU
-  timing), so treat GPU/audio behaviour as unproven.
+  longer logged. None of these fixes could be validated on real hardware; Azahar does not establish physical GPU timing
+  or audible hardware output, so treat GPU/audio behaviour as unproven.
   Measured effect in Azahar (same scripted run, release build): identical triangle and batch counts per frame, same total
   frame time, but 5 texture decodes were refused early in the run (`pinned_fail` 0 -> 5) because the slot was still in
   use by the previous frame, and the CPU vertex build no longer overlaps the GPU's previous frame (it now waits first).
-* Open: the 3DS texture cache does not yet learn when the game edits a texture in place or frees and reuses its memory
-  (the PSP path has hooks for this; the 3DS path does not), so stale textures are possible.
+* Raster lifecycle/unlock invalidation is now connected to the 3DS cache with deferred retirement. Writes outside those
+  hooks and more complex streaming/lifetime cases still need investigation; the short runs do not prove complete coverage.
+* Saving is currently disabled on 3DS: the platform memory-card configuration always reports no card and its filesystem
+  operations are stubs. It needs implementation and end-to-end save/load testing, not just a hardware check.
 * Open: the converter's `ps2rc/convert/toolchain.py` batch runner is inherited from upstream and was only hardened
   for paths with spaces by quoting; unusual path characters are untested.
 

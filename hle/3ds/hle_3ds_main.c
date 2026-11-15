@@ -150,7 +150,8 @@ int main(void)
     if (hle_ram_end > HLE_RAM_SIZE) hle_ram_end = HLE_RAM_SIZE;
 
     char elf_path[256], disc_dir[256], map_path[256], meta_path[256];
-    snprintf(elf_path, sizeof(elf_path), "%sdisc/%s", HLE_3DS_ROOT, HLE_PACK_BOOT_ELF);
+    /* The converter/stager installs the boot ELF beside discmap.txt, not inside the asset directory. */
+    snprintf(elf_path, sizeof(elf_path), "%s%s", HLE_3DS_ROOT, HLE_PACK_BOOT_ELF);
     snprintf(disc_dir, sizeof(disc_dir), "%sdisc", HLE_3DS_ROOT);
     snprintf(map_path, sizeof(map_path), "%sdiscmap.txt", HLE_3DS_ROOT);
     snprintf(meta_path, sizeof(meta_path), "%siso_meta.bin", HLE_3DS_ROOT);

@@ -1,98 +1,82 @@
 # Codex / Claude Code handoff
 
-Updated 2026-11-15. Read `AGENTS.md` first. This document contains source-only status and no private run evidence.
+Updated 2026-11-15. Read `AGENTS.md` first. This is a source-only handoff; no game-derived files belong in git.
 
-## Claude update (2026-11-15, after merging PR #1)
+## Current objective and repository state
 
-- PR #1 merged into `main`. `ps2rc3ds.py test` passes on `main` (5 host executables, 6,000 equivalence cases,
-  11 Python tests, source and history guard).
-- Full translated-game builds of **both** models linked from a clean clone (private local conversion outputs, not in
-  git): New text 11.57 MB / BSS 13.64 MB; Old text 11.57 MB / BSS 6.58 MB.
-- Azahar runs of each release build (about 4 minutes each): the New build in New 3DS mode reached city frames with the
-  same triangle counts as before the merge and no texture omissions. The Old build in Old 3DS mode booted
-  (normal heap 72,352 KiB, linear 8,192 KiB) and drew city frames, but with up to 171 texture omissions per sampled frame,
-  ~43,000 refused texture decodes and the linear heap down to ~0.8 MB. Numbers are in `docs/3DS_STATUS.md`.
-- The user asked for one build that runs on both models with New 3DS speedups. That is NOT done: the models are still
-  separate builds (compile-time capacities, and `__ctru_linear_heap_size` must be fixed before `main`). A single binary
-  needs runtime-sized renderer buffers and a custom `__system_allocateHeaps` that chooses the linear/normal split from
-  the application memory size. Next owner: decide whether to do that, and give the Old profile a texture policy that
-  keeps scenes recognisable within its memory (smaller/downscaled textures rather than refusals).
-- The user authorised making the repository public when ready. Claude judged the source ready as an experimental,
-  not-playable project with these limits stated, and changed visibility after this update (see git history / repo settings).
+The user handed the published project back to Codex to fix the game, then return a concrete handoff to Claude.
+The user authorized any suitable latest private conversion/build workspace for local full builds and Azahar runs.
+The repository is public and private vulnerability reporting was verified enabled. This pass changes neither setting.
+Neither model is established as playable. Real hardware, physical controls, audio, saving and sustained gameplay remain unverified.
 
-## User objective and publication decision
+Work branch: `codex/texture-cache-recovery`, based on `20bee84` (the full-build/Azahar update after PR #1).
+The next owner should read this branch's changes and the latest section in `docs/3DS_STATUS.md`, rather than the superseded
+pre-publication handoff. LICENSE and NOTICE.md must remain identical to pinned upstream `8cd56bb`.
 
-The user requested checks of the pre-publication fixes, Old 3DS compatibility and shared Codex/Claude project instructions.
-They authorized making the repository public once ready, or handing back to Claude if it is not ready.
+## Changes in this pass
 
-**Keep the repository private for now.** An experimental Old-model profile is implemented, but a full translated-game
-Old-model build and run remain unverified. Source/SDK compilation must not be represented as demonstrated compatibility.
-The previous publication review's excluded directories and disc images were not opened during this work.
+- Old textures now use RGB565 for opaque, RGBA5551 for cutout and RGBA4 for blended images. World images are bounded
+  to 64 pixels / 8 KiB; HUD copies use a separate tier up to 128 pixels / 32 KiB. Stored smaller levels or point decimation
+  reduce residency before admission. The 2 MiB cache and 8 MiB linear reservation remain unchanged; metadata has 512 slots.
+- New textures retain RGBA8 and their existing level policy. Old decode scratch shrank from 1,052,672 to 69,632 bytes,
+  reducing the tested Old release BSS to about 5.64 MB (the published baseline reported about 6.58 MB).
+- Raster create, destroy, unlock and texture-read hooks now invalidate all matching 3DS cache copies. Dirty snapshots
+  remain alive while current/submitted batches can reference them. New prepares cannot silently reuse a dirty snapshot.
+  After GPU completion, dirty unpinned copies are retired. Header dimensions/format are also checked on cache hits.
+- Fixed the static-budget rejection path in `w3d_citro3d_backend.c`: it formerly reserved the entire remaining vertex
+  buffer before returning for a budget skip, blocking later immediate/lit draws and inflating input counters. It now checks
+  the budget first. Whole-mesh budget omission and real buffer-capacity limits still exist.
+- Fixed fresh-profile startup: staging puts the boot ELF beside discmap.txt at the runtime root, but the loader opened
+  disc/<boot>. An isolated fresh profile reproduced the failure. The loader now opens the staged root file; no manual
+  duplicate boot file in disc/ is needed.
+- Removed first-texel/mean-color diagnostics. The numeric-only log summarizer now accepts strict texture-pressure lines.
+- Updated tests and stale project guidance; no game images, builds, translated sources or raw logs are included.
 
-## Starting point and changes
+## Verification
 
-Started from `5038f6b` on main (Claude's review fixes and measured-effects documentation).
-Source inspection confirms the audio frame count, ELF file/memory-size check, palette bounds, GPU wait ordering,
-previous-frame texture protection and removal of raw instruction/packet dumps.
+- Eight host executables cover controls, clipping, texture layout, both production texture-cache profiles, both backend
+  capacities and static-budget exhaustion. The production cache tests use synthetic packets and a fake GPU allocator:
+  packing/alpha formats, separate HUD detail, 300 mixed-size resident images under 2 MiB, graceful refusal when all slots
+  are pinned, and deferred invalidation through GPU completion. The budget test fails against the pre-fix production source.
+- Eleven selected Python tests and 6,000 adapter equivalence cases pass; the source/history guard and diff checks pass.
+- Full translated-game New release, Old release and Old profile builds link using ignored private conversion outputs.
+- Final emulator results and remaining limitations are recorded in `docs/3DS_STATUS.md`. The final Old profile includes
+  scripted input and captures; the New check uses a release build. They are correctness checks, not comparable speed benchmarks.
+- Final Old diagnostic captures were inspected locally: player, environment, minimap and HUD text were recognisable.
+  All raw logs/captures remain private. Never paste them into this PR or an issue; use the reviewed numeric summary only.
+- The existing SDK warning in posix_memalign (nonnull argument compared with null) remains; it is unrelated to this pass.
 
-Added or changed:
+## Next work for Claude
 
-- `AGENTS.md`, `CLAUDE.md` and `.claude/`: shared policy, navigation and coordination rules.
-- `hle/3ds/hle_3ds_profile.h`: reduced old-model vertex/batch/cache defaults.
-- `hle/3ds/hle_3ds_main.c`: old-profile linear heap reservation, model/heap preflight and conditional New-model speedup.
-- `hle/3ds/hle_3ds_padmap.*`, `hle_3ds_platform.c`: Old-model camera/shoulder modifier controls without IR/C-stick dependency.
-- Renderer headers and source: selected capacities and no capture-buffer allocation when captures are disabled.
-- Build/CLI: `--model old3ds`, separate objects and artifact names; matching model selection for staging and Azahar.
-- Staging: SHA-256 comparison, because size plus timestamp can still match changed contents; replacement unlinks hard links first.
-- Summary filter: full-line numeric formats; removed the unrestricted profiler-text wildcard and trailing-payload acceptance.
-- History guard: scans actual blobs across local refs beyond upstream, including renamed/deleted files and disguised binary content;
-  missing base or a Git failure fails the history check.
-- `3ds-port/tests/test_port_tools.py`, expanded native host tests, CI tooling regressions and `native-checks.sh`.
-- Setup/status/Old-model docs: limits, controls and explicit evidence boundaries.
+1. Review and merge this source branch after its CI and latest runtime evidence pass review. Keep the texture/capacity tests.
+   Do not infer whole-game correctness or physical-hardware support from these short emulator runs.
+2. Work toward one binary without regressing New-model quality: renderer arrays/capacities and texture policy currently
+   depend on compile-time model flags, and Old linear-heap size is set before main. A unified build needs runtime-sized
+   renderer storage and a startup allocation policy based on the actual application memory allowance. Old-mode Azahar
+   still grants much more normal heap than a real Old 3DS launch may provide; do not infer hardware model from that alone.
+3. Attribute the slow render_scene/camera_show guest self time, then optimize measured bottlenecks. Do not present
+   reduced drawing or smaller textures as proof of faster full-detail rendering. Skipped meshes still need a distance/priority
+   policy; the static budget is currently draw-order based.
+4. Test real New/Old hardware memory, release-build controls, audio and sustained gameplay. Saving is disabled: the 3DS
+   memory-card configuration returns no card and filesystem operations are stubs, so implement and test save/load support.
+   Track any stale images
+   caused by writes that bypass the raster lifecycle/unlock hooks. The hooks do not prove all guest write paths are covered.
+5. Repeat longer scenes/streaming transitions and inspect HUD/alpha quality with the compact formats. Old cache can reach
+   its 2 MiB cap and capture builds leave little linear headroom. Temporary safe refusals remain possible while textures are busy.
 
-## Verification performed
+## Reproduction and process ownership
 
-- Eight Python tooling regressions passed: model/artifact selection, portable config switching, shell quoting,
-  same-size/same-time staging without write-through, restrictive summaries, renamed/deleted history, other refs and absent base.
-- Five host executables passed: input mapping (including old-model chords), homogeneous clipping, texture layout,
-  New-model backend and Old-model backend.
-- Native ARM11 source compilation passed for both models with installed devkitPro headers and the real shader.
-  This compiles native source units and assembly only; it does not link the full game.
-- One existing SDK/compiler warning remains: `posix_memalign` compares an argument declared nonnull to null.
-- The full `ps2rc3ds.py test` command passed: five host executables, 6,000 converter equivalence cases,
-  11 selected Python tests (20 platform-dependent tests deselected), and the source/history guard.
-- Python syntax, shell syntax, documentation links and `git diff --check` passed. License/notices match the upstream base.
-
-## Claude's next steps
-
-Use an explicitly authorized private build environment. Do not add outputs to this source checkout's tracked files.
+Use your explicitly authorized local conversion outputs, selected via PS2RC3DS_WORK. Keep outputs ignored and private.
 
 ```bash
 python 3ds-port/ps2rc3ds.py test
 bash 3ds-port/scripts/native-checks.sh
 python 3ds-port/ps2rc3ds.py build --model new3ds
 python 3ds-port/ps2rc3ds.py build --model old3ds
-python 3ds-port/ps2rc3ds.py build --model old3ds --mode profile --max-seconds 1500
+python 3ds-port/ps2rc3ds.py build --model old3ds --mode profile --max-seconds 300
 ```
 
-1. Check the full linked Old-model text/data/BSS size and both heap sizes. Its 36 MiB normal-heap preflight is an initial
-   floor only; verify guest RAM, audio and coroutine stack allocations throughout boot and streaming.
-2. Test the matching old-model artifact in Old-model Azahar, then actual Old 3DS/XL/original 2DS with a documented
-   homebrew launch memory allowance. Follow `docs/3DS_OLD_MODEL.md`. Do not infer memory availability from physical RAM.
-3. Confirm New-model behavior after the profile/header refactor and compare bounded geometry/texture omissions.
-4. Fix or explicitly retain the known texture invalidation issue: in-place updates and recycled raster addresses can return stale images.
-   Preserve GPU lifetime when adding invalidation. Old model's smaller cache can increase omissions.
-5. Review numeric summaries only before sharing; no raw logs, game builds, captures or translated code in GitHub issues/PRs.
-6. GitHub private vulnerability reporting is a feature of public repositories, so it cannot be required as a pre-publication
-   setting for this private fork. Enable and verify it immediately after an otherwise-approved visibility change and before
-   advertising that route. The private repository's endpoint returned 404; both CLI and connected integration have admin access.
-   See [GitHub's feature documentation](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository).
-7. Recheck source/history, required PS2RC credit and unchanged license/notices, and public-facing claims. Publish only after
-   resolving the above validation gaps or obtaining a user-approved narrower experimental-source publication scope.
-
-## Final validation / delivery
-
-Game-free checks passed as recorded above. Full translated-game build/link, emulator execution and hardware tests were
-not performed here. Review [draft PR #1](https://github.com/CheatoOfficial/gta-san-andreas-3ds-port/pull/1) on the private
-`codex/old3ds-compatibility` branch; its changes are intended for Claude's
-full-build/runtime validation before merging or publication. No repository visibility change was made.
+Use a separate portable emulator copy/profile for each concurrently tested model. Record the exact executable path,
+PID, start time and artifact hash; stop only that owned PID after verifying its identity. Never stop all Azahar processes.
+Clear or archive prior captures and verify capture timestamps against the run start before using them as evidence.
+Do not restage a running process's data. Real SD staging is outside this pass.

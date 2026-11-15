@@ -1,8 +1,9 @@
-/* PS2 GIF-packet raster conversion to a bounded Citro3D RGBA8 texture cache.
+/* PS2 GIF-packet raster conversion to a bounded Citro3D texture cache.
    texconv.c is the pack's validated PS2 raster decoder; this target asks it for a linear PSP-format intermediate,
    expands that to RGBA, then tiles it for the PICA texture unit. */
 #include "hle_3ds_texture.h"
 #include "hle_3ds_texture_layout.h"
+#include "hle_3ds_texture_pack.h"
 
 #include "hle.h"
 #include "hle_plat.h"
@@ -23,13 +24,15 @@
 #ifndef HLE_3DS_TEX_MAX_BYTES
 #define HLE_3DS_TEX_MAX_BYTES HLE_3DS_DEFAULT_TEX_BYTES
 #endif
-#define HLE_3DS_TEX_DECODE_BYTES (1024u * 1024u + 4096u)
+/* One converted base level plus palette/padding; Old policy never produces a level above 128x128. */
+#define HLE_3DS_TEX_DECODE_BYTES ((HLE_3DS_OLD_MODEL ? 128u * 128u * 4u : 1024u * 1024u) + 4096u)
 
 typedef struct {
     Hle3dsTexture texture;
     uint32_t pix, pal, opix, last_use, pinned_frame;
+    uint32_t width, height, depth, format;
     size_t bytes;
-    uint8_t valid;
+    uint8_t valid, dirty, overlay;
 } TextureSlot;
 
 typedef struct {
@@ -48,6 +51,7 @@ static uint32_t use_clock, frame_serial = 1, gpu_done_serial; /* frames up to gp
 static unsigned decoded_count, decode_failures;
 static unsigned fail_bad_pointer, fail_bad_packet, fail_oversize;
 static unsigned fail_pinned_cache, fail_no_slot, fail_tex_init, fail_convert;
+static unsigned scaled_count, invalidated_count;
 
 static uint32_t next_power_of_two(uint32_t value)
 {
@@ -56,7 +60,7 @@ static uint32_t next_power_of_two(uint32_t value)
     return result;
 }
 
-static int raster_info(uint32_t raster, RasterInfo *info, int *error)
+static int raster_info(uint32_t raster, RasterInfo *info, int *error, int overlay)
 {
     if (error) *error = TC_ERR_ARG;
     if (!raster || raster >= hle_ram_end || hle_ram_end - raster < 0x28u) return 0;
@@ -84,14 +88,24 @@ static int raster_info(uint32_t raster, RasterInfo *info, int *error)
     if (!result) result = tc_ps2_inspect(&info->source, &info->decoded);
     if (!result) {
         tc_policy_default(&info->policy);
-        info->policy.max_dim = 512;
+        info->policy.max_dim = HLE_3DS_OLD_MODEL ? (overlay ? 128 : 64) : 512;
         info->policy.max_levels = 1;
         info->policy.cache_bytes = 0;
         info->policy.swizzle = 0;       /* expand a simple linear intermediate to RGBA8 below */
-        info->policy.decimate = 0;
+        info->policy.decimate = HLE_3DS_OLD_MODEL;
         info->policy.alpha = TC_AC_CLUT;
         info->policy.direct32 = TC_D32_8888;
         result = tc_plan(&info->decoded, &info->policy, &info->plan);
+        /* Admit smaller complete images rather than spending the entire cache on a few large rasters.
+           Keep 2D atlases separately so the world policy cannot force HUD text to world resolution. */
+        if (HLE_3DS_OLD_MODEL) {
+            const size_t limit = overlay ? 32768u : 8192u;
+            while (!result && (size_t)next_power_of_two(info->plan.level[0].width) *
+                     next_power_of_two(info->plan.level[0].height) * 2u > limit && info->policy.max_dim > 8) {
+                info->policy.max_dim /= 2;
+                result = tc_plan(&info->decoded, &info->policy, &info->plan);
+            }
+        }
     }
     if (result) {
         if (error) *error = result;
@@ -185,16 +199,9 @@ static int psp_texel_rgba(const RasterInfo *raster, const uint8_t *buffer, uint3
 
 static int decode_to_texture(RasterInfo *raster, C3D_Tex *texture, int *alpha_class)
 {
-    if (raster->plan.total_bytes > sizeof(decode_buffer)) return TC_ERR_SIZE;
-    const int result = tc_convert(&raster->decoded, &raster->policy, &raster->plan,
-                                  decode_buffer, sizeof(decode_buffer));
-    if (result) return result;
-
     uint8_t *destination = (uint8_t *)C3D_Tex2DGetImagePtr(texture, 0, NULL);
     if (!destination) return TC_ERR_ARG;
     const TcPspLevel *level = &raster->plan.level[0];
-    uint64_t sums[4] = {0, 0, 0, 0};
-    uint8_t first[4] = {0, 0, 0, 0};
     for (uint32_t y = 0; y < texture->height; ++y) {
         const uint32_t source_y = y < level->height ? y : level->height - 1u;
         for (uint32_t x = 0; x < texture->width; ++x) {
@@ -208,9 +215,14 @@ static int decode_to_texture(RasterInfo *raster, C3D_Tex *texture, int *alpha_cl
             color[2] = 255u;
             color[3] = 255u;
 #endif
-            if (x == 0 && y == 0) memcpy(first, color, sizeof(first));
-            for (unsigned channel = 0; channel < 4; ++channel) sums[channel] += color[channel];
-            const uint32_t offset = hle_3ds_texture_texel_index(x, y, texture->width, texture->height) * 4u;
+            const uint32_t index = hle_3ds_texture_texel_index(x, y, texture->width, texture->height);
+            if (HLE_3DS_OLD_MODEL) {
+                uint16_t packed = texture->fmt == GPU_RGB565 ? hle_3ds_pack_rgb565(color) :
+                    texture->fmt == GPU_RGBA5551 ? hle_3ds_pack_rgba5551(color) : hle_3ds_pack_rgba4(color);
+                memcpy(destination + index * 2u, &packed, sizeof(packed));
+                continue;
+            }
+            const uint32_t offset = index * 4u;
             /* PICA GPU_RGBA8 image memory uses ABGR byte order (Epic REGTA's upload convention). */
             destination[offset + 0u] = color[3];
             destination[offset + 1u] = color[2];
@@ -220,14 +232,13 @@ static int decode_to_texture(RasterInfo *raster, C3D_Tex *texture, int *alpha_cl
     }
     *alpha_class = raster->plan.alpha_class;
     ++decoded_count;
+    if (level->width < raster->width || level->height < raster->height) ++scaled_count;
     if (decoded_count <= 8u) {
-        const uint64_t texels = (uint64_t)level->width * level->height;
         LOG("Citro3D texture decoded %u: raster=%08x %ux%u fmt=%04x kind=%u psm=%u swz=%u -> %ux%u "
-            "alpha=%u first=%02x%02x%02x%02x mean=%u/%u/%u/%u\n",
+            "alpha=%u gpu_format=%u\n",
             decoded_count, raster->raster, raster->width, raster->height, raster->format, raster->decoded.kind,
             raster->plan.psm, raster->plan.swizzled, level->width, level->height, raster->plan.alpha_class,
-            first[0], first[1], first[2], first[3], (unsigned)(sums[0] / texels), (unsigned)(sums[1] / texels),
-            (unsigned)(sums[2] / texels), (unsigned)(sums[3] / texels));
+            (unsigned)texture->fmt);
         hle_plat_log_flush();
     }
     return TC_OK;
@@ -244,13 +255,13 @@ static void slot_drop(TextureSlot *slot)
 /* A slot is busy while this frame uses it or while a submitted frame that used it may still be on the GPU. */
 static int slot_busy(const TextureSlot *slot)
 {
-    return slot->pinned_frame == frame_serial || slot->pinned_frame > gpu_done_serial;
+    return slot->pinned_frame == frame_serial || (int32_t)(slot->pinned_frame - gpu_done_serial) > 0;
 }
 
-static TextureSlot *find_slot(uint32_t raster)
+static TextureSlot *find_slot(uint32_t raster, int overlay)
 {
     for (unsigned i = 0; i < HLE_3DS_TEX_SLOTS; ++i)
-        if (slots[i].valid && slots[i].texture.raster == raster) return &slots[i];
+        if (slots[i].valid && slots[i].texture.raster == raster && slots[i].overlay == overlay) return &slots[i];
     return NULL;
 }
 
@@ -276,8 +287,9 @@ static TextureSlot *choose_victim(void)
     return oldest;
 }
 
-int hle_3ds_texture_prepare(uint32_t raster, int *alpha_class)
+static int texture_prepare(uint32_t raster, int *alpha_class, int overlay)
 {
+    if (!HLE_3DS_OLD_MODEL) overlay = 0;
     if (alpha_class) *alpha_class = 0;
     if (!raster) return 1;
     if (raster >= hle_ram_end || hle_ram_end - raster < 0x28u) {
@@ -285,8 +297,10 @@ int hle_3ds_texture_prepare(uint32_t raster, int *alpha_class)
     }
 
     const uint32_t pix = gw(raster + 0x04u), pal = gw(raster + 0x08u), opix = gw(raster + 0x24u);
-    TextureSlot *slot = find_slot(raster);
-    if (slot && slot->pix == pix && slot->pal == pal && slot->opix == opix) {
+    TextureSlot *slot = find_slot(raster, overlay);
+    if (slot && !slot->dirty && slot->pix == pix && slot->pal == pal && slot->opix == opix &&
+        slot->width == gw(raster + 0x0Cu) && slot->height == gw(raster + 0x10u) &&
+        slot->depth == gw(raster + 0x14u) && slot->format == ((uint32_t)gb(raster + 0x23u) << 8)) {
         slot->last_use = ++use_clock;
         slot->pinned_frame = frame_serial;
         if (alpha_class) *alpha_class = slot->texture.alpha_class;
@@ -297,7 +311,7 @@ int hle_3ds_texture_prepare(uint32_t raster, int *alpha_class)
 
     RasterInfo info;
     int error = 0;
-    if (!raster_info(raster, &info, &error)) {
+    if (!raster_info(raster, &info, &error, overlay)) {
         ++decode_failures; ++fail_bad_packet;
         if (decode_failures <= 8u) {
             const uint32_t raster_pix = gw(raster + 0x04u);
@@ -315,7 +329,7 @@ int hle_3ds_texture_prepare(uint32_t raster, int *alpha_class)
 
     const uint32_t texture_width = next_power_of_two(info.plan.level[0].width);
     const uint32_t texture_height = next_power_of_two(info.plan.level[0].height);
-    const size_t bytes = (size_t)texture_width * texture_height * 4u;
+    const size_t bytes = (size_t)texture_width * texture_height * (HLE_3DS_OLD_MODEL ? 2u : 4u);
     if (!texture_width || !texture_height || bytes > HLE_3DS_TEX_MAX_BYTES) {
         ++decode_failures; ++fail_oversize; return 0;
     }
@@ -330,7 +344,13 @@ int hle_3ds_texture_prepare(uint32_t raster, int *alpha_class)
     slot = choose_slot();
     if (!slot) { ++decode_failures; ++fail_no_slot; return 0; }
     if (slot->valid) slot_drop(slot);
-    if (!C3D_TexInit(&slot->texture.tex, (u16)texture_width, (u16)texture_height, GPU_RGBA8)) {
+    error = info.plan.total_bytes > sizeof(decode_buffer) ? TC_ERR_SIZE :
+        tc_convert(&info.decoded, &info.policy, &info.plan, decode_buffer, sizeof(decode_buffer));
+    if (error) { ++decode_failures; ++fail_convert; return 0; }
+    const GPU_TEXCOLOR gpu_format = !HLE_3DS_OLD_MODEL ? GPU_RGBA8 :
+        info.plan.alpha_class == TC_ALPHA_OPAQUE ? GPU_RGB565 :
+        info.plan.alpha_class == TC_ALPHA_CUTOUT ? GPU_RGBA5551 : GPU_RGBA4;
+    if (!C3D_TexInit(&slot->texture.tex, (u16)texture_width, (u16)texture_height, gpu_format)) {
         ++decode_failures; ++fail_tex_init;
         return 0;
     }
@@ -356,6 +376,8 @@ int hle_3ds_texture_prepare(uint32_t raster, int *alpha_class)
     slot->pix = info.pix;
     slot->pal = info.pal;
     slot->opix = info.opix;
+    slot->width = info.width; slot->height = info.height; slot->depth = info.depth; slot->format = info.format;
+    slot->overlay = (uint8_t)overlay;
     slot->bytes = bytes;
     slot->last_use = ++use_clock;
     slot->pinned_frame = frame_serial;
@@ -368,7 +390,17 @@ int hle_3ds_texture_prepare(uint32_t raster, int *alpha_class)
 
 const Hle3dsTexture *hle_3ds_texture_get(uint32_t raster)
 {
-    TextureSlot *slot = find_slot(raster);
+    TextureSlot *slot = find_slot(raster, 0);
+    if (!slot) return NULL;
+    slot->last_use = ++use_clock;
+    return &slot->texture;
+}
+
+int hle_3ds_texture_prepare(uint32_t raster, int *alpha_class) { return texture_prepare(raster, alpha_class, 0); }
+int hle_3ds_texture_prepare_2d(uint32_t raster) { return texture_prepare(raster, NULL, 1); }
+const Hle3dsTexture *hle_3ds_texture_get_2d(uint32_t raster)
+{
+    TextureSlot *slot = find_slot(raster, HLE_3DS_OLD_MODEL ? 1 : 0);
     if (!slot) return NULL;
     slot->last_use = ++use_clock;
     return &slot->texture;
@@ -376,19 +408,27 @@ const Hle3dsTexture *hle_3ds_texture_get(uint32_t raster)
 
 void hle_3ds_texture_frame_reset(void)
 {
-    if (++frame_serial == 0) frame_serial = 1;
+    ++frame_serial;
 }
 
 /* Called once the previous frame has finished on the GPU (right after C3D_FrameBegin returns). */
 void hle_3ds_texture_gpu_synced(void)
 {
     gpu_done_serial = frame_serial - 1u;
+    for (unsigned i = 0; i < HLE_3DS_TEX_SLOTS; ++i)
+        if (slots[i].valid && slots[i].dirty && !slot_busy(&slots[i])) slot_drop(&slots[i]);
 }
 
 void hle_3ds_texture_forget(uint32_t raster)
 {
-    TextureSlot *slot = find_slot(raster);
-    if (slot && !slot_busy(slot)) slot_drop(slot);
+    for (unsigned i = 0; i < HLE_3DS_TEX_SLOTS; ++i) {
+        TextureSlot *slot = &slots[i];
+        if (!slot->valid || slot->texture.raster != raster) continue;
+        slot->dirty = 1;
+        ++invalidated_count;
+        /* Keep the old snapshot for batches that already reference it. New prepare calls must not reuse it. */
+        if (!slot_busy(slot)) slot_drop(slot);
+    }
 }
 
 void hle_3ds_texture_report(unsigned frame)
@@ -403,9 +443,9 @@ void hle_3ds_texture_report(unsigned frame)
         frame, valid, HLE_3DS_TEX_SLOTS, pinned,
         (unsigned)(cache_bytes / 1024u), (unsigned)(HLE_3DS_TEX_MAX_BYTES / 1024u),
         (unsigned)(cache_peak_bytes / 1024u), (unsigned)(linearSpaceFree() / 1024u));
-    LOG("decoded=%u failures=%u badptr=%u badpacket=%u oversize=%u pinned_fail=%u noslot=%u texinit=%u convert=%u\n",
+    LOG("decoded=%u failures=%u badptr=%u badpacket=%u oversize=%u pinned_fail=%u noslot=%u texinit=%u convert=%u scaled=%u invalidated=%u\n",
         decoded_count, decode_failures, fail_bad_pointer, fail_bad_packet, fail_oversize,
-        fail_pinned_cache, fail_no_slot, fail_tex_init, fail_convert);
+        fail_pinned_cache, fail_no_slot, fail_tex_init, fail_convert, scaled_count, invalidated_count);
 }
 
 void hle_3ds_texture_shutdown(void)
