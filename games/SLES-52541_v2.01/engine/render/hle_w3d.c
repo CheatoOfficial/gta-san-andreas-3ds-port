@@ -2001,7 +2001,7 @@ static int w3d_atomic(R5900Ctx *c)
             }
         }
     }
-#elif !defined(HLE_PSP)
+#elif !defined(HLE_PSP) && !defined(HLE_3DS)
     {
         static uint64_t logged_flip = ~0ull;
         static unsigned logged_atomics;
