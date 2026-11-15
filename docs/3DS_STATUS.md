@@ -52,6 +52,9 @@ is tight: linear heap free dips under 1 MB in Azahar), and the old New 3DS. Noth
   loader rejects segments with file size above memory size; palette reads are bounds-checked; raw guest bytes are no
   longer logged. None of these fixes could be validated on real hardware (Azahar neither exercises NDSP nor the GPU
   timing), so treat GPU/audio behaviour as unproven.
+  Measured effect in Azahar (same scripted run, release build): identical triangle and batch counts per frame, same total
+  frame time, but 5 texture decodes were refused early in the run (`pinned_fail` 0 -> 5) because the slot was still in
+  use by the previous frame, and the CPU vertex build no longer overlaps the GPU's previous frame (it now waits first).
 * Open: the 3DS texture cache does not yet learn when the game edits a texture in place or frees and reuses its memory
   (the PSP path has hooks for this; the 3DS path does not), so stale textures are possible.
 * Open: the converter's `ps2rc/convert/toolchain.py` batch runner is inherited from upstream and was only hardened
