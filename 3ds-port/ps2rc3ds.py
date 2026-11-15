@@ -78,7 +78,7 @@ def cmd_doctor(a):
         print(("  [ok]   " if good else "  [FAIL] ") + what + ("" if good else ("  -> " + hint if hint else "")))
         ok = ok and good
 
-    print("Checking the toolchain for the PS2RC 3DS port")
+    print("Checking the toolchain for the GTA San Andreas 3DS port")
     line(sys.version_info >= (3, 11), f"Python {platform.python_version()} (need 3.11+)", "install Python 3.11 or newer")
     line(shutil.which("git") is not None, "git", "install git")
     for mod, pipname in (("elftools", "pyelftools"), ("PIL", "pillow"), ("pytest", "pytest")):

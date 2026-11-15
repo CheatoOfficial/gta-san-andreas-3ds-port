@@ -12,8 +12,8 @@ This is not legal advice. It summarises the rules this repository follows.
   port you dump a disc you own and convert it on your own machine.
 * Facts needed to work with a game (function addresses, sizes, and the checksum that identifies a disc) are allowed
   by the license; you remain responsible for what you publish.
-* Do not use the app title, icon or name in a way that suggests endorsement. The build's menu title is the neutral
-  "PS2RC 3DS (experimental)".
+* The project and app are named after the game only to say what they work with. They are unofficial: do not use the
+  name, icon or artwork in a way that suggests endorsement, and do not add the game's artwork or logos here.
 * The 3DS button/graphics conventions follow public references (libctru, Citro3D, and observations of the
   REGTA 3DS port's mappings). No REGTA code is included. Third-party code keeps its own license (see NOTICE.md).
 * Rights holders with concerns: see `TAKEDOWN.md` and open an issue.

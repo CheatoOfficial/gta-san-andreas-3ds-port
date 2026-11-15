@@ -12,8 +12,8 @@ include $(DEVKITARM)/3ds_rules
 LD := $(CC)
 
 OUTPUT       := ps2rc-sa
-APP_TITLE    := PS2RC 3DS (experimental)
-APP_AUTHOR   := PS2RC-3DS contributors / PS2RC by SandstoneDev
+APP_TITLE    := GTA San Andreas 3DS Port
+APP_AUTHOR   := Unofficial fan port / PS2RC by SandstoneDev
 APP_DESCRIPTION := PAL v2.01 local runtime experiment; requires privately staged disc data
 APP_ICON     := $(DEVKITPRO)/libctru/default_icon.png
 

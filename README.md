@@ -1,8 +1,9 @@
-# PS2RC 3DS (experimental)
+# GTA San Andreas 3DS Port
 
-An experimental port of the [PS2RC](https://github.com/SandstoneDev/PS2RC) PlayStation 2 recompiler runtime to the
-**New Nintendo 3DS / New 2DS XL** family (devkitPro, libctru, Citro3D, PICA200). The first and only target is the
-PAL disc **SLES-52541 v2.01** (the game pack that ships with PS2RC).
+**Unofficial, experimental, not playable yet.** An experimental port of *Grand Theft Auto: San Andreas* (PS2, PAL disc
+**SLES-52541 v2.01**) to the **New Nintendo 3DS / New 2DS XL** family, built on the
+[PS2RC](https://github.com/SandstoneDev/PS2RC) PlayStation 2 recompiler runtime (devkitPro, libctru, Citro3D, PICA200).
+You supply your own copy of the disc; no game files are included.
 
 > Based on PS2RC by SandstoneDev
 > https://github.com/SandstoneDev/PS2RC
@@ -10,9 +11,9 @@ PAL disc **SLES-52541 v2.01** (the game pack that ships with PS2RC).
 
 This repository is a derived work of PS2RC and is distributed under the [PS2RC License](LICENSE) (source-available,
 free of charge, no game data). The original README is kept as [README.PS2RC.md](README.PS2RC.md).
-It is an independent project: not affiliated with or endorsed by SandstoneDev, Sony, Nintendo, or any game
-developer or publisher. Game and platform names are trademarks of their owners and are used only to say what the
-software works with.
+It is an independent fan project: **not affiliated with, authorised or endorsed by** SandstoneDev, Rockstar Games,
+Take-Two Interactive, Sony Interactive Entertainment or Nintendo. "Grand Theft Auto", "San Andreas", "PlayStation" and
+"Nintendo 3DS" are trademarks of their owners, used only to say what the software works with.
 
 ## Status: not playable
 
@@ -43,7 +44,7 @@ under `3ds-work/`, which is git-ignored. **Never share, commit or upload any of 
 ## Quick start
 
 ```bash
-git clone https://github.com/CheatoOfficial/ps2rc-3ds.git && cd ps2rc-3ds
+git clone https://github.com/CheatoOfficial/gta-san-andreas-3ds-port.git && cd gta-san-andreas-3ds-port
 python 3ds-port/ps2rc3ds.py doctor --fix          # checks/installs Python packages and 3DS libraries
 python 3ds-port/ps2rc3ds.py verify-disc "path/to/your-disc.iso"
 python 3ds-port/ps2rc3ds.py convert     "path/to/your-disc.iso" --use wsl   # ~10-30 min; or --use docker --pull
@@ -70,9 +71,9 @@ Legal notes: [docs/3DS_LEGAL.md](docs/3DS_LEGAL.md).
 
 ## Development and AI disclosure
 
-Almost all of the 3DS port code, build tooling and documentation was written by an AI coding agent (Claude Code)
-working under human direction; a human supplies the disc, sets the goals, runs the emulator/hardware tests and
-reviews results. It is not fully human-reviewed. Treat unverified claims in the docs accordingly, and please
+Almost all of the 3DS port code, build tooling and documentation was written by AI coding agents, **Claude Code
+(Anthropic) and ChatGPT Codex (OpenAI)**, working under human direction; a human supplies the disc, sets the goals,
+runs the emulator/hardware tests and reviews results. It is not fully human-reviewed. Treat unverified claims in the docs accordingly, and please
 report anything that is wrong. Contributions are welcome (see [docs/3DS_STATUS.md](docs/3DS_STATUS.md) for open
 work); please say in your pull request if AI tools were involved.
 
