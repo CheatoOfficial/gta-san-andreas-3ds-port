@@ -7,6 +7,7 @@ This is not legal advice. It summarises the rules this repository follows.
 * "Game data" includes anything taken or produced from a game disc: program code in original, translated or
   generated form (the C that PS2RC generates is game data), graphics, models, sound, video, text, scripts, maps,
   data tables, and **links to copies of any of it**.
+* Raw runtime logs and captures count as game-derived: share only the output of `3ds-port/scripts/summarize-log.py`.
 * Therefore: no disc images, no generated sources, no staged `disc/` folders, no 3DSX/ELF builds made from them, no
   logs or screenshots that show game content, and no pointers to where disc images can be downloaded. To use this
   port you dump a disc you own and convert it on your own machine.

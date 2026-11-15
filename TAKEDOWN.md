@@ -1,5 +1,9 @@
 # Takedown policy
 
+> **This repository is an unofficial fork (GTA San Andreas 3DS Port).** For material in *this* repository, open an
+> issue here or contact the owners of the `CheatoOfficial` GitHub organization through GitHub; we will act on valid
+> reports. The addresses below belong to the upstream PS2RC project and are for upstream material only.
+
 PS2RC is a generic recompiler. The project distributes no game data and no game
 builds: each player converts their own legally obtained copy of a game on their own
 PC.

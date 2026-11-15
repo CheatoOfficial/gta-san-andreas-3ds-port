@@ -45,6 +45,18 @@ Docker mode on this PC (Docker Desktop was not running), `doctor --fix` on a mac
 Physical button input, audio output, sustained gameplay, missions, saving, real-hardware speed and memory (the game
 is tight: linear heap free dips under 1 MB in Azahar), and the old New 3DS. Nothing here supports "playable".
 
+## Known issues from the pre-publication review (2026-11-15)
+
+* Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a
+  submitted frame stay protected until that frame completes; stereo audio buffers report frames, not halfwords; the ELF
+  loader rejects segments with file size above memory size; palette reads are bounds-checked; raw guest bytes are no
+  longer logged. None of these fixes could be validated on real hardware (Azahar neither exercises NDSP nor the GPU
+  timing), so treat GPU/audio behaviour as unproven.
+* Open: the 3DS texture cache does not yet learn when the game edits a texture in place or frees and reuses its memory
+  (the PSP path has hooks for this; the 3DS path does not), so stale textures are possible.
+* Open: the converter's `ps2rc/convert/toolchain.py` batch runner is inherited from upstream and was only hardened
+  for paths with spaces by quoting; unusual path characters are untested.
+
 ## Open work (good first contributions)
 
 1. **Get a hardware profile log** ([3DS_HARDWARE_TEST.md](3DS_HARDWARE_TEST.md)). It decides what comes next.

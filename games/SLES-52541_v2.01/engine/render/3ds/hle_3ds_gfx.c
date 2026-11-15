@@ -385,6 +385,11 @@ static void apply_2d_blend(const RndState *state)
 void hle_3ds_gfx_present(void)
 {
     if (!gfx_ready) return;
+    /* Wait for the previous frame's GPU work BEFORE the CPU rewrites the shared vertex buffers below. */
+    const uint64_t tick_pre = svcGetSystemTick();
+    C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+    const uint64_t tick_begin = svcGetSystemTick();
+    hle_3ds_texture_gpu_synced();
     const W3dC3dVertex *source = w3d_citro3d_frame_vertices();
     const int source_count = w3d_citro3d_frame_vertex_count();
     const W3dC3dBatch *batches = w3d_citro3d_frame_batches();
@@ -524,9 +529,6 @@ void hle_3ds_gfx_present(void)
         target->fog = 1.0f;
     }
 
-    const uint64_t tick_pre = svcGetSystemTick();
-    C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-    const uint64_t tick_begin = svcGetSystemTick();
     C3D_RenderTargetClear(top, C3D_CLEAR_ALL, current_clear_color, 0);
     C3D_FrameDrawOn(top);
     C3D_FogGasMode(GPU_NO_FOG, GPU_PLAIN_DENSITY, false);

@@ -10,8 +10,10 @@ to `session.log`. It is a measurement build, not a playable one.
    room and FAT32's 4 GB file limit is checked).
 3. Launch `ps2rc-3ds-profile.3dsx` from the Homebrew Launcher (not as a CIA). Leave it alone: the start takes about a
    minute, then the route runs until the time cap. Power off or press START when it stops.
-4. Copy `SD:/3ds/ps2rc-sa/session.log` back and attach it to an issue (it is a text log of timings and runtime messages, not game assets or code; read through it
-   first and remove anything you would not want public).
+4. Copy `SD:/3ds/ps2rc-sa/session.log` back to your PC and run
+   `python 3ds-port/scripts/summarize-log.py session.log > summary.txt`. Attach **only that summary** to an issue, after
+   reading it. **Never attach the raw `session.log` or any `gpu-frame-*.ppm` capture**: they can contain game-derived
+   data (addresses, instruction words, texture details, rendered game images), which this project may not distribute.
 
 Look for these lines in the log:
 

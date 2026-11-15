@@ -16,6 +16,16 @@ The first run of `doctor` tells you exactly what is missing.
 The PSP toolchain is only needed for the `convert` step, because PS2RC compiles its PSP reference build there; the 3DS
 build itself uses only devkitPro.
 
+### Ubuntu / Linux specifics
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate && pip install pyelftools pillow pytest   # Python deps in a venv
+bash 3ds-port/scripts/install-pspdev-wsl.sh                  # installs ~/pspdev (works on any Debian/Ubuntu x86_64)
+export PSPDEV="$HOME/pspdev" PATH="$HOME/pspdev/bin:$PATH"   # needed so the converter finds psp-gcc
+```
+Then use `convert ... --use native` (the `wsl` mode exists only on Windows) and run `doctor` from the same shell. On
+Windows with WSL2, nothing needs exporting: the converter runs `wsl.exe` and finds `~/pspdev` itself.
+
 ## 2. Check your disc
 
 ```bash
@@ -30,7 +40,7 @@ These identifiers are facts used to recognise a disc; they are not game data.
 ## 3. Convert (translation + staged data, about 10-30 minutes)
 
 ```bash
-python 3ds-port/ps2rc3ds.py convert "your-disc.iso" --use wsl      # or: --use docker --pull
+python 3ds-port/ps2rc3ds.py convert "your-disc.iso" --use wsl      # Linux: --use native; or: --use docker --pull
 ```
 
 This runs PS2RC's own converter (`python -m ps2rc.convert`) into `3ds-work/work` (analysis, translated C, generated
@@ -61,7 +71,9 @@ The log is `<azahar>/user/sdmc/3ds/ps2rc-sa/session.log`; profile builds also wr
 Copy the log right after each run: the next run overwrites it, and old files from other builds mislead.
 
 **Real 3DS:** see [3DS_HARDWARE_TEST.md](3DS_HARDWARE_TEST.md). `stage-sd SD_ROOT` copies everything to
-`SD:/3ds/ps2rc-sa/` (dry run unless you add `--yes`; it checks FAT32's 4 GB file limit).
+`SD:/3ds/ps2rc-sa/` (dry run unless you add `--yes`; it checks FAT32's 4 GB file limit; files whose size or
+modification time differ are replaced, but files that no longer exist after a reconversion are NOT deleted, so
+remove `SD:/3ds/ps2rc-sa/` first when you reconvert).
 
 ## 6. Tests (no game data needed)
 

@@ -478,7 +478,7 @@ void rt_fatal(R5900Ctx *c, const char *what, uint32_t pc, uint32_t value)
         return;
     }
     if (strcmp(what, "trap") == 0) {
-        LOG("guest TRAP at %08x (insn %08x) - continuing\n", pc, value);
+        LOG("guest TRAP at %08x - continuing\n", pc); /* the instruction word is game code: not logged */
         return;
     }
     if (strcmp(what, "unsupported") == 0)

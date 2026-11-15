@@ -58,7 +58,7 @@ static int load_elf_data(const char *path, uint32_t *entry)
         }
         if (ph[0] != 1 || ph[4] == 0) continue;
         const uint64_t end = (uint64_t)ph[2] + ph[5];
-        if (end > hle_ram_end || ph[2] > hle_ram_end || end < ph[2]) {
+        if (end > hle_ram_end || ph[2] > hle_ram_end || end < ph[2] || ph[4] > ph[5]) {
             fclose(file);
             printf("ELF segment outside guest RAM: %08lx + %08lx\n",
                    (unsigned long)ph[2], (unsigned long)ph[5]);

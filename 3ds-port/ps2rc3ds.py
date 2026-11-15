@@ -193,7 +193,7 @@ def cmd_test(a):
     rc = 0
     for s in ("host-tests.sh", "adapter-equiv.sh"):
         rc |= run([bash, "-lc", f"PATH=/usr/bin:$PATH bash '{msys(REPO / '3ds-port' / 'scripts' / s)}'"])
-    rc |= run([sys.executable, "3ds-port/scripts/check-no-game-data.py"], cwd=REPO)
+    rc |= run([sys.executable, "3ds-port/scripts/check-no-game-data.py", "--history"], cwd=REPO)
     rc |= run([sys.executable, "-m", "pytest", "-q", "tests/cfg", "-m", "not wsl and not oracle and not psp and not slow and not needs_game"],
               cwd=REPO)
     print("\nALL TESTS PASSED" if rc == 0 else "\nSOME TESTS FAILED")
@@ -206,14 +206,25 @@ def newest_3dsx():
     return cands[0] if cands else None
 
 
+def same_file(s, d):
+    """Same size and same modification time (copy2 and hard links preserve it): a reconversion changes it."""
+    try:
+        a, b = s.stat(), d.stat()
+    except OSError:
+        return False
+    return a.st_size == b.st_size and int(a.st_mtime) == int(b.st_mtime)
+
+
 def copy_tree(src, dst, link=False):
     for root, _dirs, files in os.walk(src):
         rel = Path(root).relative_to(src)
         (dst / rel).mkdir(parents=True, exist_ok=True)
         for f in files:
             s, d = Path(root) / f, dst / rel / f
-            if d.exists() and d.stat().st_size == s.stat().st_size:
+            if same_file(s, d):
                 continue
+            if d.exists() or d.is_symlink():
+                d.unlink()          # never write through a hard link into the source file
             if link:
                 try:
                     os.link(s, d)
@@ -232,9 +243,15 @@ def stage_runtime(dest, threedsx, link=False):
         if s.is_dir():
             copy_tree(s, dest / item, link)
         else:
-            shutil.copy2(s, dest / item)
+            t = dest / item
+            if t.exists() or t.is_symlink():
+                t.unlink()
+            shutil.copy2(s, t)
     if threedsx:
-        shutil.copy2(threedsx, dest / threedsx.name)
+        t = dest / threedsx.name
+        if t.exists() or t.is_symlink():
+            t.unlink()
+        shutil.copy2(threedsx, t)
 
 
 def cmd_stage_sd(a):

@@ -43,7 +43,7 @@ typedef struct {
 static TextureSlot slots[HLE_3DS_TEX_SLOTS];
 static uint8_t decode_buffer[HLE_3DS_TEX_DECODE_BYTES] __attribute__((aligned(16)));
 static size_t cache_bytes, cache_peak_bytes;
-static uint32_t use_clock, frame_serial = 1;
+static uint32_t use_clock, frame_serial = 1, gpu_done_serial; /* frames up to gpu_done_serial have finished on the GPU */
 static unsigned decoded_count, decode_failures;
 static unsigned fail_bad_pointer, fail_bad_packet, fail_oversize;
 static unsigned fail_pinned_cache, fail_no_slot, fail_tex_init, fail_convert;
@@ -70,7 +70,7 @@ static int raster_info(uint32_t raster, RasterInfo *info, int *error)
     /* The guest keeps the high byte of RenderWare's 16-bit format at +0x23. */
     info->format = (uint32_t)gb(raster + 0x23u) << 8;
     if (!info->pix || info->pix < 0x50u || info->pix >= hle_ram_end ||
-        (info->pal && (info->pal < 0x50u || info->pal >= hle_ram_end)) ||
+        (info->pal && (info->pal < 0x50u || info->pal >= hle_ram_end || info->pal - 0x50u > hle_ram_end - 0x450u)) ||
         info->width == 0 || info->height == 0 || info->width > 1024u || info->height > 1024u)
         return 0;
 
@@ -240,6 +240,12 @@ static void slot_drop(TextureSlot *slot)
     memset(slot, 0, sizeof(*slot));
 }
 
+/* A slot is busy while this frame uses it or while a submitted frame that used it may still be on the GPU. */
+static int slot_busy(const TextureSlot *slot)
+{
+    return slot->pinned_frame == frame_serial || slot->pinned_frame > gpu_done_serial;
+}
+
 static TextureSlot *find_slot(uint32_t raster)
 {
     for (unsigned i = 0; i < HLE_3DS_TEX_SLOTS; ++i)
@@ -252,7 +258,7 @@ static TextureSlot *choose_slot(void)
     TextureSlot *oldest = NULL;
     for (unsigned i = 0; i < HLE_3DS_TEX_SLOTS; ++i) {
         if (!slots[i].valid) return &slots[i];
-        if (slots[i].pinned_frame == frame_serial) continue;
+        if (slot_busy(&slots[i])) continue;
         if (!oldest || slots[i].last_use < oldest->last_use) oldest = &slots[i];
     }
     return oldest;
@@ -263,7 +269,7 @@ static TextureSlot *choose_victim(void)
 {
     TextureSlot *oldest = NULL;
     for (unsigned i = 0; i < HLE_3DS_TEX_SLOTS; ++i) {
-        if (!slots[i].valid || slots[i].pinned_frame == frame_serial) continue;
+        if (!slots[i].valid || slot_busy(&slots[i])) continue;
         if (!oldest || slots[i].last_use < oldest->last_use) oldest = &slots[i];
     }
     return oldest;
@@ -285,7 +291,7 @@ int hle_3ds_texture_prepare(uint32_t raster, int *alpha_class)
         if (alpha_class) *alpha_class = slot->texture.alpha_class;
         return 1;
     }
-    if (slot && slot->pinned_frame == frame_serial) { ++decode_failures; ++fail_pinned_cache; return 0; }
+    if (slot && slot_busy(slot)) { ++decode_failures; ++fail_pinned_cache; return 0; }
     if (slot) slot_drop(slot);
 
     RasterInfo info;
@@ -301,17 +307,6 @@ int hle_3ds_texture_prepare(uint32_t raster, int *alpha_class)
                 (uint32_t)gb(raster + 0x23u) << 8, error);
             LOG("Citro3D texture reject detail: pix=%08x pal=%08x opix=%08x ram_end=%08x\n",
                 raster_pix, raster_pal, raster_opix, hle_ram_end);
-            if (raster_pix >= 0x50u && raster_pix <= hle_ram_end) {
-                const uint8_t *u = hle_ram + raster_pix - 0x50u;
-                LOG("Citro3D texture packet bytes: gif=%02x%02x%02x%02x%02x%02x%02x%02x "
-                    "trxpos=%02x%02x%02x%02x%02x%02x%02x%02x trxreg=%02x%02x%02x%02x%02x%02x%02x%02x "
-                    "trxdir=%02x%02x%02x%02x%02x%02x%02x%02x image=%02x%02x%02x%02x%02x%02x%02x%02x\n",
-                    u[0],u[1],u[2],u[3],u[4],u[5],u[6],u[7],
-                    u[0x10],u[0x11],u[0x12],u[0x13],u[0x14],u[0x15],u[0x16],u[0x17],
-                    u[0x20],u[0x21],u[0x22],u[0x23],u[0x24],u[0x25],u[0x26],u[0x27],
-                    u[0x30],u[0x31],u[0x32],u[0x33],u[0x34],u[0x35],u[0x36],u[0x37],
-                    u[0x40],u[0x41],u[0x42],u[0x43],u[0x44],u[0x45],u[0x46],u[0x47]);
-            }
             hle_plat_log_flush();
         }
         return 0;
@@ -383,10 +378,16 @@ void hle_3ds_texture_frame_reset(void)
     if (++frame_serial == 0) frame_serial = 1;
 }
 
+/* Called once the previous frame has finished on the GPU (right after C3D_FrameBegin returns). */
+void hle_3ds_texture_gpu_synced(void)
+{
+    gpu_done_serial = frame_serial - 1u;
+}
+
 void hle_3ds_texture_forget(uint32_t raster)
 {
     TextureSlot *slot = find_slot(raster);
-    if (slot && slot->pinned_frame != frame_serial) slot_drop(slot);
+    if (slot && !slot_busy(slot)) slot_drop(slot);
 }
 
 void hle_3ds_texture_report(unsigned frame)

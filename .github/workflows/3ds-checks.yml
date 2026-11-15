@@ -13,4 +13,4 @@ jobs:
       - name: Vertex converter equivalence
         run: bash 3ds-port/scripts/adapter-equiv.sh
       - name: No game data / personal paths
-        run: python3 3ds-port/scripts/check-no-game-data.py
+        run: python3 3ds-port/scripts/check-no-game-data.py --history

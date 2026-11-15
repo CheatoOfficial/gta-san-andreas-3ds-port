@@ -82,7 +82,7 @@ static void ndsp_sink(void *user, const int16_t *stereo48, uint32_t frames)
         DSP_FlushDataCache(dst, n * 4);
         memset(wb, 0, sizeof *wb);
         wb->data_pcm16 = dst;
-        wb->nsamples = n * 2; /* NDSP counts interleaved PCM16 halfwords, not stereo frames. */
+        wb->nsamples = n; /* sample frames per channel (libctru's streaming example uses frames for stereo PCM16); hardware playback unverified */
         ndspChnWaveBufAdd(AUDIO_3DS_CHANNEL, wb);
         a->queued_frames += n;
         pos += n;

@@ -211,18 +211,21 @@ class _ScriptBatch(Toolchain):
             if a and a[0] in TOOLS:
                 a[0] = self.pspdev() + "/bin/" + a[0]
             cmd = " ".join(shlex.quote(x) for x in a)
-            lines.append("cd %s && t0=$(date +%%s%%N); %s > %s/%d.log 2>&1; rc=$?; t1=$(date +%%s%%N); "
-                         "echo \"$rc $(( (t1 - t0) / 1000000 ))\" > %s/%d.rc"
-                         % (shlex.quote(tcwd), cmd, tb, i, tb, i))
+            lines.append("cd %s && t0=$(date +%%s%%N); %s > %s 2>&1; rc=$?; t1=$(date +%%s%%N); "
+                         "echo \"$rc $(( (t1 - t0) / 1000000 ))\" > %s"
+                         % (shlex.quote(tcwd), cmd, shlex.quote("%s/%d.log" % (tb, i)),
+                            shlex.quote("%s/%d.rc" % (tb, i))))
         with open(os.path.join(bdir, "jobs.txt"), "w", encoding="utf-8", newline="\n") as f:
             for ln in lines:                              # xargs -d '\n': taken literally (no quote processing)
                 f.write(ln + "\n")
         script = os.path.join(bdir, "run.sh")
         with open(script, "w", encoding="utf-8", newline="\n") as f:
-            f.write("#!/bin/bash\nexport PATH=%s/bin:$PATH\nexport PSPDEV=%s\n" % (self.pspdev(), self.pspdev()))
+            f.write("#!/bin/bash\nexport PATH=%s:$PATH\nexport PSPDEV=%s\n" % (shlex.quote(self.pspdev() + "/bin"),
+                                                                                  shlex.quote(self.pspdev())))
             # One job per line, taken literally: NUL-separate the lines and use xargs -0 (GNU and the official pspdev
             # image's xargs both support it, unlike -d; without -0/-d, xargs -I would eat the quotes in each command).
-            f.write("tr '\\n' '\\0' < %s/jobs.txt | nice -n 10 xargs -0 -P %d -I CMD bash -c CMD\n" % (tb, max(1, nproc)))
+            f.write("tr '\\n' '\\0' < %s | nice -n 10 xargs -0 -P %d -I CMD bash -c CMD\n"
+                    % (shlex.quote(tb + "/jobs.txt"), max(1, nproc)))
         p = subprocess.Popen(self._shell(self.tool_path(HostPath(script))), stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, **_hidden())
         out = []

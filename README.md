@@ -43,8 +43,10 @@ from the game is game-derived material the PS2RC license does not let us distrib
 * For hardware: a New 3DS / New 2DS XL with custom firmware, Homebrew Launcher and about 4 GB on the SD card.
 
 Everything made from your disc (translated C, staged assets, 3DSX builds, logs, captures) stays on your machine
-under `3ds-work/`, which is git-ignored. **Never share, commit or upload any of it.** A guard script
-(`3ds-port/scripts/check-no-game-data.py`) and CI reject game-derived files and personal paths.
+under `3ds-work/`, which is git-ignored. **Never share, commit or upload any of it.** A heuristic guard script
+(`3ds-port/scripts/check-no-game-data.py`, also run by CI) rejects common game-derived file types, personal paths and
+encoded blobs; it is a safety net, not proof, so review your own changes too. Share logs only through
+`3ds-port/scripts/summarize-log.py`, never raw.
 
 ## Quick start
 

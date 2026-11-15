@@ -1,5 +1,9 @@
 # Security
 
+> **This repository is an unofficial fork (GTA San Andreas 3DS Port).** Report problems in *this* fork privately through
+> this repository's GitHub "Report a vulnerability" button (private vulnerability reporting) or a private message to the
+> `CheatoOfficial` organization owners on GitHub. The upstream contacts below are for upstream PS2RC only.
+
 PS2RC is a build tool and a runtime for a games console. It runs on your own PC and
 your own PSP; it has no network service and no online component.
 
