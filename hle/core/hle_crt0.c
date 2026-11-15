@@ -17,6 +17,7 @@
 #include <string.h>
 #include "hle.h"
 
+/* The 3DS backend has no pack-specific entry module; its build enables HLE_CRT0_DATA here. */
 #if defined(HLE_CRT0_DATA) && defined(HLE_PACK_CRT0_ENTRY)
 #define SXW(x) ((uint64_t)(int64_t)(int32_t)(uint32_t)(x))
 

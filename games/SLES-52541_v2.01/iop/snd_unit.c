@@ -7,7 +7,7 @@
 #endif
 #include "iop_rt.c"
 #include "iop_rt_libs.c"
-#ifndef HLE_PSP
+#if !defined(HLE_PSP) && !defined(HLE_3DS)
 #include "iop_rt_ucontext.c"
 #endif
 #include "snddrv_gen.c"

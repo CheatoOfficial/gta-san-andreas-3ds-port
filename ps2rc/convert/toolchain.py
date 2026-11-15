@@ -220,7 +220,9 @@ class _ScriptBatch(Toolchain):
         script = os.path.join(bdir, "run.sh")
         with open(script, "w", encoding="utf-8", newline="\n") as f:
             f.write("#!/bin/bash\nexport PATH=%s/bin:$PATH\nexport PSPDEV=%s\n" % (self.pspdev(), self.pspdev()))
-            f.write("nice -n 10 xargs -P %d -d '\\n' -I CMD bash -c CMD < %s/jobs.txt\n" % (max(1, nproc), tb))
+            # -I already treats each input line as one item. Avoid GNU xargs' -d
+            # option here: the official pspdev image uses an xargs without it.
+            f.write("nice -n 10 xargs -P %d -I CMD bash -c CMD < %s/jobs.txt\n" % (max(1, nproc), tb))
         p = subprocess.Popen(self._shell(self.tool_path(HostPath(script))), stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, **_hidden())
         out = []

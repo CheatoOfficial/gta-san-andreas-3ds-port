@@ -22,6 +22,10 @@ typedef struct { uint32_t w[24]; } hle_hostctx;
    thread 1 5 KB, the others <= 3 KB */
 #define HLE_STACK_MAIN   (512u * 1024u)       /* guest thread 1 (crt0/main) */
 #define HLE_STACK_THREAD (128u * 1024u)       /* every other guest thread */
+#elif defined(HLE_3DS)
+typedef struct __attribute__((aligned(8))) { uint32_t w[27]; } hle_hostctx;
+#define HLE_STACK_MAIN   (512u * 1024u)
+#define HLE_STACK_THREAD (128u * 1024u)
 #else
 #include <ucontext.h>
 typedef ucontext_t hle_hostctx;

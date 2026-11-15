@@ -1,0 +1,16 @@
+name: 3ds-checks
+on: [push, pull_request]
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Add upstream base commit for the guard
+        run: git fetch --depth=1 https://github.com/SandstoneDev/PS2RC.git 8cd56bb6feee32f963d6e430ff0eda85565d1005 || true
+      - name: 3DS host tests
+        run: bash 3ds-port/scripts/host-tests.sh
+      - name: Vertex converter equivalence
+        run: bash 3ds-port/scripts/adapter-equiv.sh
+      - name: No game data / personal paths
+        run: python3 3ds-port/scripts/check-no-game-data.py

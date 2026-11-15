@@ -1,0 +1,68 @@
+# Makefile.3ds - New Nintendo 3DS executable for a PS2RC translated pack.
+# Run from a PS2RC build directory after build.sh has populated gen/ and hle/.
+
+ifeq ($(strip $(DEVKITPRO)),)
+$(error Please set DEVKITPRO to the devkitPro installation)
+endif
+ifeq ($(strip $(DEVKITARM)),)
+$(error Please set DEVKITARM to the devkitARM installation)
+endif
+
+include $(DEVKITARM)/3ds_rules
+LD := $(CC)
+
+OUTPUT       := ps2rc-sa
+APP_TITLE    := PS2RC 3DS (experimental)
+APP_AUTHOR   := PS2RC-3DS contributors / PS2RC by SandstoneDev
+APP_DESCRIPTION := PAL v2.01 local runtime experiment; requires privately staged disc data
+APP_ICON     := $(DEVKITPRO)/libctru/default_icon.png
+
+GEN_C        := $(sort $(wildcard gen/*.c))
+HLE_C        := $(sort $(wildcard hle/*.c))
+HLE_S        := $(sort $(wildcard hle/*.S))
+GEN_O        := $(patsubst gen/%.c,obj/gen/%.o,$(GEN_C))
+HLE_O        := $(patsubst hle/%.c,obj/hle/%.o,$(HLE_C))
+HLE_AS_O     := $(patsubst hle/%.S,obj/hle/%.o,$(HLE_S))
+SHADER_O     := obj/hle/vshader.shbin.o
+OFILES       := $(GEN_O) $(HLE_O) $(HLE_AS_O) $(SHADER_O)
+
+ARCH         := -mword-relocations -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
+FPFLAGS      := -fno-fast-math -fno-math-errno -frounding-math -ffp-contract=off -fno-strict-aliasing
+COMMONFLAGS  := -O2 -g -std=gnu11 -ffunction-sections -fdata-sections $(ARCH)
+INCLUDES     := -Ihle/rt -Ihle -Igen -I$(CTRULIB)/include
+CFLAGS_GEN   := $(COMMONFLAGS) $(FPFLAGS) -w $(INCLUDES) $(GEN_EXTRA)
+CFLAGS_HLE   := $(COMMONFLAGS) $(FPFLAGS) -Wall -Wno-unused-function -Wno-unused-variable -Wno-format \
+                -DHLE_3DS -DHLE_CRT0_DATA -DHLE_BUILD_NUM=$(HLE_BUILD) $(HLE_DEFS) $(INCLUDES) $(HLE_EXTRA)
+ASFLAGS      := -g $(ARCH)
+LDFLAGS      += -specs=3dsx.specs $(ARCH) -Wl,--gc-sections -Wl,-Map=$(OUTPUT).map
+LIBPATHS     += -L$(CTRULIB)/lib
+LIBS         += -lcitro3d -lctru -lm
+
+.PHONY: all clean gen_objs
+all: $(OUTPUT).3dsx
+gen_objs: $(GEN_O)
+
+$(OUTPUT).elf: $(OFILES)
+
+obj/gen/%.o: gen/%.c hle/rt/r5900_rt.h
+	@mkdir -p $(@D)
+	@t0=$$(date +%s); $(CC) $(CFLAGS_GEN) -c $< -o $@ && echo "arm-gcc -c $< $$(( $$(date +%s) - t0 )) s"
+
+obj/hle/%.o: hle/%.c $(wildcard hle/*.h) hle/hooks.def hle/rt/r5900_rt.h $(firstword $(MAKEFILE_LIST))
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS_HLE) -c $< -o $@
+
+obj/hle/%.o: hle/%.S $(firstword $(MAKEFILE_LIST))
+	@mkdir -p $(@D)
+	$(CC) $(ASFLAGS) -c $< -o $@
+
+obj/hle/vshader.shbin.o: hle/vshader.v.pica
+	@mkdir -p $(@D)
+	picasso -o hle/vshader.shbin $<
+	bin2s -a 4 -H hle/vshader_shbin.h hle/vshader.shbin > obj/hle/vshader.s
+	$(CC) -x assembler-with-cpp $(ASFLAGS) -c obj/hle/vshader.s -o $@
+
+obj/hle/hle_3ds_gfx.o: obj/hle/vshader.shbin.o
+
+clean:
+	rm -rf obj ps2rc-sa.elf ps2rc-sa.3dsx ps2rc-sa.smdh ps2rc-sa.lst ps2rc-sa.map

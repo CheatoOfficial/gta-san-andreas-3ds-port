@@ -26,6 +26,9 @@
 #include <string.h>
 #include "snd_driver.h"
 #include "iop_rt.h"
+#if defined(HLE_3DS)
+#include "hle_plat.h"
+#endif
 
 #ifndef SNDD_GEN_MEM
 #ifdef HLE_PSP
@@ -70,6 +73,29 @@ static void *psp_alloc(void *u, size_t n)
     return p;
 }
 #define SNDD_GEN_ALLOC psp_alloc
+#elif defined(HLE_3DS)
+/* PS2RC's 3DS HLE already has a tested ARM11 coroutine switch for guest threads. Reuse it so the
+   translated IOP sound-driver threads stay cooperative with the 3DS runtime rather than depending
+   on POSIX ucontext (which devkitARM does not provide). */
+typedef struct { hle_hostctx ctx; void *stack; } GCoro;
+static GCoro g_main;
+static void *pc_create(void *u, size_t st, void (*entry)(void))
+{
+    (void)u;
+    GCoro *g = (GCoro *)calloc(1, sizeof *g);
+    if (!g) return 0;
+    g->stack = hle_plat_stack_alloc(st);
+    if (!g->stack) { free(g); return 0; }
+    hle_plat_ctx_make(&g->ctx, g->stack, st, entry);
+    return g;
+}
+static void pc_swap(void *u, void *from, void *to)
+{
+    (void)u;
+    hle_plat_ctx_swap(&((GCoro *)from)->ctx, &((GCoro *)to)->ctx);
+}
+static void *pc_main(void *u) { (void)u; return &g_main; }
+static void coro_ops(IopCoroOps *o) { o->user = 0; o->create = pc_create; o->swap = pc_swap; o->main_ctx = pc_main; }
 #else
 #include "iop_rt_ucontext.h"
 static void coro_ops(IopCoroOps *o) { iop_rt_coro_ucontext(o); }

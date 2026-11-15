@@ -16,7 +16,10 @@ uint8_t *hle_ram;
 uint8_t *hle_spr;
 uint32_t hle_ram_end = HLE_RAM_SIZE;
 const char *hle_elf_path;
-int hle_max_seconds = 600;
+#ifndef HLE_DEFAULT_MAX_SECONDS
+#define HLE_DEFAULT_MAX_SECONDS 600
+#endif
+int hle_max_seconds = HLE_DEFAULT_MAX_SECONDS;
 uint64_t hle_max_frames;
 uint64_t hle_opt_mainloop_limit;
 #ifdef HLE_HAVE_VU0_MICRO

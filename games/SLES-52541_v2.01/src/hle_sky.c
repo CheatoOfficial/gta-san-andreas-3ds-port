@@ -24,6 +24,9 @@
 #include "hle_sky.h"
 #include "hle_w3d.h"                                 /* w3d_opt_near_mm: the GE near plane */
 #include "hle_water.h"                               /* water keys of the in-run A/B */
+#ifdef HLE_3DS
+#include "hle_3ds_gfx.h"
+#endif
 #include <stdlib.h>
 #include <math.h>
 #ifdef HLE_PSP
@@ -299,6 +302,8 @@ static void sky_draw(void)
     if (dt > us_prep_max) us_prep_max = dt;
 #ifdef HLE_PSP
     hle_ge_tris(outv, k, &st);
+#elif defined(HLE_3DS)
+    hle_3ds_gfx_sky_tris(outv, k, &st);
 #else
     if (hle_raster_is_open()) hle_raster_tris(outv, k, &st);
 #endif

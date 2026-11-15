@@ -1,7 +1,7 @@
 #!/bin/bash
 # build.sh - builds a translated PS2 program with the HLE runtime: the PSP EBOOT or the host (Linux x86-64) harness.
 #
-#   bash mk/build.sh [--pack NAME] [psp|host] [JOBS] [clean]
+#   bash mk/build.sh [--pack NAME] [psp|host|3ds] [JOBS] [clean]
 #
 # The game pack (games/<NAME>/pack.toml; --pack, else PACK=, else local.toml [defaults] pack) gives every input:
 #   [build] translation   the translated C (ps2rc/pipeline/translate.py output, in the work dir)
@@ -11,7 +11,8 @@
 #           pkg_out (where EBOOT.PBP goes)
 # Environment (overrides the pack):  TRANS, BDIR (build dir; default ~/ps2rc-build/<pack>_<target>), PKG_OUT,
 #   ALIAS (call|inline), LAYOUT (a layout dir or "none"), Y_HDR / Y_GEN / Y_NATIVE / ZONES (empty = off),
-#   HLE_BUILD (build number in the log header and the menu title), SPLASH (1 / 0 / test; PSP), AUDIO (1: the pack's
+#   HLE_BUILD (build number in the log header and the menu title), HLE_DEFS_EXTRA (diagnostic compile definitions),
+#   SPLASH (1 / 0 / test; PSP), AUDIO (1: the pack's
 #   sound-driver model and the SPU2 model are compiled in), PROFILE (a pack build profile, e.g. public) + GEN_DIR (its
 #   generated modules) + PROFILE_KEEP (file names the profile excludes but a developer test build keeps, e.g. the
 #   in-run A/B tester).
@@ -25,14 +26,18 @@ set -e
 export PSPDEV=${PSPDEV:-$HOME/pspdev}
 export PATH=$PSPDEV/bin:$PATH
 SRC=$(cd "$(dirname "$0")/.." && pwd)
+# Native Windows Python returns Windows drive paths. Its WSL path formatter normally emits /mnt/<drive>, but this
+# script is also used directly from the devkitPro MSYS2 shell where drives are mounted as /<drive>.
+case "${OSTYPE:-}" in cygwin*|msys*) export PS2RC_PATH_STYLE=msys ;; esac
 J=6
 TARGET=psp
 CLEAN=0
+AUDIO=${AUDIO:-0}
 while [ $# -gt 0 ]; do
   case "$1" in
     --pack) PACK=$2; shift ;;
     clean) CLEAN=1 ;;
-    host|psp) TARGET=$1 ;;
+    host|psp|3ds) TARGET=$1 ;;
     [0-9]*) J=$1 ;;
   esac
   shift
@@ -44,7 +49,7 @@ LAYOUT=${LAYOUT:-$PACK_LAYOUT}
 Y_HDR=${Y_HDR-$PACK_Y_HDR}
 Y_GEN=${Y_GEN-$PACK_Y_GEN}
 Y_NATIVE=${Y_NATIVE-$PACK_NATIVES}
-if [ "$TARGET" = host ]; then B=${BDIR:-$HOME/ps2rc-build/${PACK_NAME}_host}; else B=${BDIR:-$HOME/ps2rc-build/${PACK_NAME}_psp}; fi
+if [ -n "${BDIR:-}" ]; then B=$BDIR; else B=${HOME}/ps2rc-build/${PACK_NAME}_${TARGET}; fi
 PKG_OUT=${PKG_OUT:-$PACK_PKG_OUT}
 [ -n "$TRANS" ] && [ -f "$TRANS/stats.json" ] || { echo "no translation at '$TRANS' (pack $PACK_NAME [build] translation)"; exit 1; }
 [ "$CLEAN" = 1 ] && rm -rf "$B"
@@ -53,7 +58,9 @@ mkdir -p "$B/gen" "$B/gen_prep" "$B/hle/rt" "$B/obj"
 #   hand-translated from the game's code): hooks / zones without its exclude_hooks, its natives / defines, its source
 #   exclusions and extra sources; its generated modules come from GEN_DIR (a converter work dir's modules/)
 if [ -n "$PROFILE" ]; then
-  eval "$(python3 "$SRC/ps2rc/pack.py" profile "${PACK:--}" "$PROFILE" "$B" ${GEN_DIR:+"$GEN_DIR"} --posix)"
+  PROFILE_AUDIO_OPT=""
+  [ "$AUDIO" = 1 ] || PROFILE_AUDIO_OPT="--audio-off"
+  eval "$(python3 "$SRC/ps2rc/pack.py" profile "${PACK:--}" "$PROFILE" "$B" ${GEN_DIR:+"$GEN_DIR"} $PROFILE_AUDIO_OPT --posix)"
   PACK_HOOKS=$PROF_HOOKS
   [ -n "$PROF_ZONES" ] && PACK_ZONES=$PROF_ZONES
   [ "$PROF_NATIVES_OFF" = 1 ] && Y_NATIVE=""
@@ -77,6 +84,7 @@ python3 "$SRC/ps2rc/pipeline/layout_apply.py" "$B/gen_prep" "$B/gen" ${LAYOUT:+-
 # 2. HLE runtime: the core, the platform layer, the pack's modules (a dir's host/ or psp/ subdir for this target only)
 HLE_BUILD=${HLE_BUILD:-21}
 HLE_DEFS="-DHLE_BUILD_NUM=$HLE_BUILD"
+[ "$TARGET" = 3ds ] && HLE_DEFS="$HLE_DEFS -DHLE_3DS"
 [ -n "$Y_NATIVE" ] && HLE_DEFS="$HLE_DEFS -DHLE_YNATIVE"          # the pack's native fast paths are compiled in
 for d in $PACK_DEFINES; do HLE_DEFS="$HLE_DEFS -D$d"; done       # pack [build] defines
 # the credit splash before the boot (hle/psp/hle_splash.c, PSP only): SPLASH=1 compiles it in (-DHLE_SPLASH),
@@ -90,8 +98,8 @@ if [ "$TARGET" = psp ]; then
   esac
   echo "splash: SPLASH=$SPLASH"
 fi
-copy_dir() {                                           # *.c *.h *.S of a dir and of its <target>/ subdir
-  for f in "$1"/*.c "$1"/*.h "$1"/*.S "$1/$TARGET"/*.c "$1/$TARGET"/*.h "$1/$TARGET"/*.S; do
+copy_dir() {                                           # source files of a dir and of its <target>/ subdir
+  for f in "$1"/*.c "$1"/*.h "$1"/*.S "$1/$TARGET"/*.c "$1/$TARGET"/*.h "$1/$TARGET"/*.S "$1/$TARGET"/*.v.pica; do
     [ -f "$f" ] && cp -pu "$f" "$B/hle/"
   done
   return 0
@@ -113,13 +121,15 @@ if [ "$TARGET" = psp ]; then
   echo "menu: MENU=${MENU:-1}"
   cp -pu "$SRC/psp_exc/exc_user.c" "$SRC/psp_exc/ps2rc_exc.h" "$B/hle/"   # the user side of the kernel PRX
   rm -f "$B/hle/rmb_check.c"
+elif [ "$TARGET" = 3ds ]; then
+  copy_dir "$SRC/hle/3ds"
+  rm -f "$B/hle/rmb_check.c"
 else
   cp -pu "$SRC/hle/host/hle_host.c" "$SRC/hle/host/hle_mcfs_host.c" "$B/hle/"
   # a maskbase (v5s4) host build counts base+offset accesses that would leave the window (0 expected)
   if [ -n "$MASKBASE" ]; then cp -pu "$SRC/hle/host/rmb_check.c" "$B/hle/"; else rm -f "$B/hle/rmb_check.c"; fi
 fi
 # AUDIO=1: the pack's sound-driver model (audio_sources) with the SPU2 model (audio/) in lockstep with virtual time
-AUDIO=${AUDIO:-0}
 if [ "$AUDIO" = 1 ] && [ -n "$PACK_AUDIO_SOURCES" ]; then
   copy_dir "$SRC/audio"
   for d in $PACK_AUDIO_SOURCES; do copy_dir "$d"; done
@@ -151,18 +161,20 @@ if [ -n "$PROFILE" ]; then                             # the profile's source se
   done
 fi
 TRANS_NAME=$(python3 -c "
-import json,sys; s=json.load(open('$TRANS/stats.json'))
-print('%s,%s,exempt=%d' % (s.get('variant'), (s.get('function_set') or 'v1').split('/')[-1], len((s.get('exempt') or {}).get('main', []))))")
+import json,sys; s=json.load(open(sys.argv[1]))
+print('%s,%s,exempt=%d' % (s.get('variant'), (s.get('function_set') or 'v1').split('/')[-1], len((s.get('exempt') or {}).get('main', []))))
+" "$TRANS/stats.json")
 TRANS_NAME="$TRANS_NAME,alias=$ALIAS,layout=$([ -n "$LAYOUT" ] && basename "$LAYOUT" || echo none)"   # no spaces
 [ -n "$Y_HDR" ] && TRANS_NAME="$TRANS_NAME,y=$(echo "$Y_HDR" | tr ',' '+')"                   # header levers
 HLE_DEFS="$HLE_DEFS -DHLE_TRANSLATION=\\\"$TRANS_NAME\\\""
+[ -n "${HLE_DEFS_EXTRA:-}" ] && HLE_DEFS="$HLE_DEFS $HLE_DEFS_EXTRA"
 echo "translation: $TRANS ($TRANS_NAME)"
 # the hook bindings (the HLE sources name their hooks; the pack's hooks.def gives the addresses) and the pack's values
 python3 "$SRC/ps2rc/bind.py" "$PACK_HOOKS" "$B/hle/hle_bind.h" "$B/hle"
 python3 "$SRC/ps2rc/pack.py" cheader ${PACK:+"$PACK"} "$B/hle/hle_pack.h"
 # 3. runtime header: original + target delta (psp: masked accessors + rtx_/rmx_; host: the same with alias checks)
-if [ "$TARGET" = psp ]; then MODE=psp; else MODE=check; fi
-YH="$Y_HDR"; [ "$TARGET" = host ] && YH=$(echo "$Y_HDR" | tr ',' '\n' | grep -v '^ca2\?$' | paste -sd, -)
+if [ "$TARGET" = psp ] || [ "$TARGET" = 3ds ]; then MODE=psp; else MODE=check; fi
+YH="$Y_HDR"; { [ "$TARGET" = host ] || [ "$TARGET" = 3ds ]; } && YH=$(echo "$Y_HDR" | tr ',' '\n' | grep -v '^ca2\?$' | paste -sd, -)
 python3 "$SRC/ps2rc/pipeline/patch_rt_header.py" "$SRC/runtime/r5900_rt.h" "$B/hle/rt/r5900_rt.h" --mode $MODE \
     --alias "$ALIAS" $MASKBASE ${YH:+--y "$YH"}
 cd "$B"
@@ -180,6 +192,7 @@ if [ "$TARGET" = host ]; then
   exit 0
 fi
 # 4. PSP: all generated units in parallel, then HLE + link + EBOOT
+# 4a. New Nintendo 3DS: translated ARM code + the 3DS platform runtime
 #    a code layout (-ffunction-sections, order.ld: the main-loop functions first in .text) when the pack has one
 GEN_EXTRA=""; HLE_EXTRA=""; LAYOUT_ORDER=""
 rm -f order.ld
@@ -193,6 +206,24 @@ fi
 echo "$GEN_EXTRA|$HLE_EXTRA" > flags.new                  # objects of other flags are rebuilt
 cmp -s flags.new flags.txt || rm -rf obj/gen obj/hle
 mv flags.new flags.txt
+if [ "$TARGET" = 3ds ]; then
+  rm -f ps2rc-sa.elf ps2rc-sa.3dsx
+  make -f "$SRC/mk/Makefile.3ds" -j"$J" HLE_DEFS="$HLE_DEFS" HLE_BUILD="$HLE_BUILD" \
+      GEN_EXTRA="$GEN_EXTRA" HLE_EXTRA="$HLE_EXTRA" > make_3ds.log 2>&1 || {
+        grep -E "error:|warning:|undefined reference|Error" make_3ds.log | head -80 || tail -80 make_3ds.log
+        exit 1
+      }
+  tail -35 make_3ds.log
+  test -f ps2rc-sa.3dsx
+  if [ -x "$DEVKITARM/bin/arm-none-eabi-size" ]; then
+    "$DEVKITARM/bin/arm-none-eabi-size" ps2rc-sa.elf
+  else
+    echo "size report skipped: arm-none-eabi-size not found under $DEVKITARM/bin"
+  fi
+  ls -la ps2rc-sa.3dsx
+  echo "build wall time: $(( $(date +%s) - start )) s"
+  exit 0
+fi
 [ -f splash.txt ] || [ "$SPLASH" != 0 ] || echo "splash=0" > splash.txt   # dirs built before = no splash
 echo "splash=$SPLASH" > splash.new                       # a SPLASH change rebuilds the HLE objects (not obj/gen)
 cmp -s splash.new splash.txt || rm -rf obj/hle

@@ -309,7 +309,7 @@ static void load(void)
 {
     if (n_tab >= 0) return;
     n_tab = 0;
-#ifdef HLE_PSP
+#if defined(HLE_PSP) || defined(HLE_3DS)
     load_dir(hle_plat_disc_root());
 #else
     const char *e = getenv("HLE_CFG_DIR");
@@ -328,7 +328,7 @@ static void load(void)
     found = found_dev || found_main;
 }
 
-#ifndef HLE_PSP
+#if !defined(HLE_PSP) && !defined(HLE_3DS)
 __attribute__((constructor)) static void host_load_early(void) { load(); }   /* before any module's getenv */
 #endif
 

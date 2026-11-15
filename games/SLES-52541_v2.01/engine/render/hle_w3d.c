@@ -54,10 +54,39 @@
 #include "hle_w3d.h"
 #include "hle_w3d_int.h"
 #include "hle_w3d_me.h"                       /* the Media Engine split */
+#ifdef HLE_3DS
+#include "hle_cfg.h"
+#include "hle_3ds_gfx.h"
+#endif
 #include <stdlib.h>
 #include <math.h>
 #ifdef HLE_PSP
 #include "hle_ge.h"
+#endif
+
+#ifndef HLE_3DS_RENDER_DIAG
+#define HLE_3DS_RENDER_DIAG 0
+#endif
+#ifndef HLE_3DS_CAPTURE_START_FRAME
+#define HLE_3DS_CAPTURE_START_FRAME 0
+#endif
+
+#if !defined(HLE_PSP) && !defined(HLE_3DS)
+static int w3d_host_diag_flip(uint64_t flip)
+{
+    static int loaded;
+    static uint64_t requested = ~0ull;
+    if (!loaded) {
+        loaded = 1;
+        const char *value = getenv("HLE_W3D_RENDER_DIAG_FLIP");
+        if (value && *value) {
+            char *end = NULL;
+            requested = strtoull(value, &end, 10);
+            if (!end || *end) requested = ~0ull;
+        }
+    }
+    return requested == flip;
+}
 #endif
 
 void GUEST_FN(mesh_node_body)(R5900Ctx *c);
@@ -83,8 +112,11 @@ void GUEST_FN(mesh_node_body)(R5900Ctx *c);
 #define GE_P_STRIP 4u
 
 /* ------------------------------------------------------------------ options */
-int w3d_opt_on = 1, w3d_opt_kb = 1792, w3d_opt_cull = 1, w3d_opt_fog = 1, w3d_opt_clip = 1, w3d_opt_front = 0,
-    w3d_opt_afail = 1;
+/* Use the shared PSP/host convention. Target display rotation belongs in the
+   backend; the old 3DS inversion was chosen before buffer/depth fixes. */
+#define W3D_DEFAULT_FRONT 0
+int w3d_opt_on = 1, w3d_opt_kb = 1792, w3d_opt_cull = 1, w3d_opt_fog = 1, w3d_opt_clip = 1,
+    w3d_opt_front = W3D_DEFAULT_FRONT, w3d_opt_afail = 1;
 int w3d_opt_light = 1, w3d_opt_gnear = 1, w3d_opt_dnq = 2, w3d_opt_rebake_us = 2000, w3d_opt_chunk = 24,
     w3d_opt_chunk_group = 4, w3d_opt_tilebase = 0, w3d_opt_sky = 1, w3d_opt_near_mm = 0;
 int w3d_opt_lodz = 0;                     /* the LOD pass tests GREATER (see lod_pass) */
@@ -1946,6 +1978,54 @@ static int w3d_atomic(R5900Ctx *c)
     rd->dn = dn; rd->gmod = gmod; rd->strip = (hflags & 1) != 0;
     rd->cp = cp;
     memcpy(rd->amb3, amb3, 3);
+#if defined(HLE_3DS) && HLE_3DS_RENDER_DIAG
+    {
+        static unsigned logged_frame = ~0u, logged_atomics;
+        const unsigned diag_frame = hle_3ds_gfx_frame_for_draw();
+        if (diag_frame == HLE_3DS_CAPTURE_START_FRAME) {
+            if (logged_frame != diag_frame) { logged_frame = diag_frame; logged_atomics = 0; }
+            if (logged_atomics < 12u) {
+                const unsigned index = logged_atomics++;
+                LOG("Citro3D diag atomic frame %u #%u: obj=%08x geo=%08x pds=%08x ltm=%08x camera=%08x meshes=%u defer=%d M=%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                    diag_frame, index, obj, geo, pds, ltm, camera, nmesh, defer,
+                    gm[0], gm[1], gm[2], gm[3], gm[4], gm[5], gm[6], gm[7], gm[8], gm[9], gm[10], gm[11]);
+                if (index == 0u) {
+                    LOG("Citro3D diag camera-view frame %u: %.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                        diag_frame, V.m[0][0], V.m[0][1], V.m[0][2], V.m[1][0], V.m[1][1], V.m[1][2],
+                        V.m[2][0], V.m[2][1], V.m[2][2], V.m[3][0], V.m[3][1], V.m[3][2]);
+                    LOG("Citro3D diag frame-ltm frame %u: %.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                        diag_frame, L.m[0][0], L.m[0][1], L.m[0][2], L.m[1][0], L.m[1][1], L.m[1][2],
+                        L.m[2][0], L.m[2][1], L.m[2][2], L.m[3][0], L.m[3][1], L.m[3][2]);
+                }
+                hle_plat_log_flush();
+            }
+        }
+    }
+#elif !defined(HLE_PSP)
+    {
+        static uint64_t logged_flip = ~0ull;
+        static unsigned logged_atomics;
+        const uint64_t diag_flip = hle_render_flip_count();
+        if (w3d_host_diag_flip(diag_flip)) {
+            if (logged_flip != diag_flip) { logged_flip = diag_flip; logged_atomics = 0; }
+            if (logged_atomics < 12u) {
+                const unsigned index = logged_atomics++;
+                LOG("HostW3D diag atomic flip %llu #%u: obj=%08x geo=%08x pds=%08x ltm=%08x camera=%08x meshes=%u defer=%d M=%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                    (unsigned long long)diag_flip, index, obj, geo, pds, ltm, camera, nmesh, defer,
+                    gm[0], gm[1], gm[2], gm[3], gm[4], gm[5], gm[6], gm[7], gm[8], gm[9], gm[10], gm[11]);
+                if (index == 0u) {
+                    LOG("HostW3D diag camera-view flip %llu: %.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                        (unsigned long long)diag_flip, V.m[0][0], V.m[0][1], V.m[0][2], V.m[1][0], V.m[1][1], V.m[1][2],
+                        V.m[2][0], V.m[2][1], V.m[2][2], V.m[3][0], V.m[3][1], V.m[3][2]);
+                    LOG("HostW3D diag frame-ltm flip %llu: %.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                        (unsigned long long)diag_flip, L.m[0][0], L.m[0][1], L.m[0][2], L.m[1][0], L.m[1][1], L.m[1][2],
+                        L.m[2][0], L.m[2][1], L.m[2][2], L.m[3][0], L.m[3][1], L.m[3][2]);
+                }
+                hle_plat_log_flush();
+            }
+        }
+    }
+#endif
     /* what may change before the records are drawn: each mesh's material colour (fading entities set the alpha only
        around their render call) and texture */
     uint32_t mtab = mh + 0x10 + gw(mh + 0x0C), dmc = gmod ? 0 : gwk(GP_DEFAULT_MATCOL);
@@ -2862,7 +2942,17 @@ void hle_w3d_init(void)
 {
     memset(hash_head, 0xFF, sizeof hash_head);
     for (int i = 0; i < W3D_MAXENT; i++) ent[i].next = -1;
-#ifndef HLE_PSP
+#ifdef HLE_3DS
+    int renderer_cfg_count = 0;
+    for (int i = 0; i < hle_cfg_count(); ++i) {
+        const char *key = hle_cfg_key(i);
+        if (!strncmp(key, "w3d_", 4) || !strcmp(key, "world3d") || !strcmp(key, "mesh_guest")) {
+            w3d_cfg(key, hle_cfg_val(i));
+            ++renderer_cfg_count;
+        }
+    }
+    if (renderer_cfg_count) LOG("world3d: applied %d renderer cfg keys from ps2rc.cfg/ps2rc_dev.cfg\n", renderer_cfg_count);
+#elif !defined(HLE_PSP)
     static const char *keys[] = {"world3d", "mesh_guest", "w3d_kb", "w3d_cull", "w3d_clip", "w3d_fog", "w3d_afail",
                                  "w3d_front", "w3d_light", "w3d_gnear", "w3d_dnq", "w3d_rebake_us", "w3d_chunk",
                                  "w3d_chunk_group", "w3d_tilebase", "w3d_sky", "w3d_near_mm",

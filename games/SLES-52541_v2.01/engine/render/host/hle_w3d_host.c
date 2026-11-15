@@ -16,6 +16,7 @@
  * lights + normals and bone matrices for the lit / skinned pipelines (w3d_be_lights / w3d_be_bones). */
 #ifndef HLE_PSP
 #include <stdlib.h>
+#include <stdio.h>
 #include <math.h>
 #include <time.h>
 #include "hle.h"
@@ -36,6 +37,77 @@ static uint32_t scratch_n;
 static int cur_path;                         /* diagnostics: 0 mesh, 1 range, 2 indexed, 3 CPU floats, 4 lit */
 static void copies_free(void);
 static const char *path_name[] = {"mesh", "range", "indexed", "cpu-float", "lit"};
+
+static int render_diag_matches(uint64_t flip)
+{
+    static int loaded;
+    static uint64_t requested;
+    if (!loaded) {
+        loaded = 1;
+        const char *value = getenv("HLE_W3D_RENDER_DIAG_FLIP");
+        if (value && *value) {
+            char *end = NULL;
+            requested = strtoull(value, &end, 10);
+            if (!end || *end) requested = ~0ull;
+        } else requested = ~0ull;
+    }
+    return requested == flip;
+}
+
+static void render_diag_matrix(const char *label, uint64_t flip, const float *matrix, unsigned count)
+{
+    LOG("HostW3D diag %s flip %llu:", label, (unsigned long long)flip);
+    for (unsigned i = 0; i < count; ++i) LOG(" %.6f", matrix[i]);
+    LOG("\n");
+}
+
+typedef struct {
+    char magic[8];
+    uint32_t version, fmt, stride, nverts, nprims, cam_bytes, world_bytes, state_bytes;
+} W3dCaptureHeader;
+static int w3d_capture_done;
+
+/* Optional local-only capture for feeding one actual static mesh into the separate 3DS adapter test.
+   HLE_W3D_CAPTURE is unset for normal host runs. The file contains no translated game code. */
+static void capture_mesh_range(const W3dMeshView *m, const uint8_t *verts, uint32_t first_vert,
+                               const uint32_t *words, uint32_t nwords)
+{
+    const char *path = getenv("HLE_W3D_CAPTURE");
+    if (w3d_capture_done || !path || !*path || !m || !verts || !words || !nwords || cur.lights ||
+        (m->fmt != W3D_FMT_UV16 && m->fmt != W3D_FMT_UVF) || !m->stride || first_vert >= m->nverts)
+        return;
+
+    uint64_t nverts = 0;
+    uint32_t nprims = 0;
+    for (uint32_t i = 0; i < nwords; ++i) {
+        const uint32_t word = words[i];
+        const uint32_t cmd = word >> 24;
+        if (cmd == 0x0B) break;
+        if (cmd != 0x04) return;
+        nverts += word & 0xFFFFu;
+        if (++nprims > m->nprims || nverts > UINT32_MAX) return;
+    }
+    if (!nprims || nverts < 3 || nverts > m->nverts - first_vert || nverts > UINT32_MAX) return;
+
+    w3d_capture_done = 1;
+    W3dCaptureHeader header = {
+        {'W', '3', 'D', 'C', 'A', 'P', '1', 0}, 1, m->fmt, m->stride,
+        (uint32_t)nverts, nprims, sizeof(cam), sizeof(world), sizeof(cur)
+    };
+    FILE *file = fopen(path, "wb");
+    if (!file) { fprintf(stderr, "W3D capture: cannot open %s\n", path); return; }
+    const int ok = fwrite(&header, 1, sizeof(header), file) == sizeof(header) &&
+                   fwrite(&cam, 1, sizeof(cam), file) == sizeof(cam) &&
+                   fwrite(world, 1, sizeof(world), file) == sizeof(world) &&
+                   fwrite(&cur, 1, sizeof(cur), file) == sizeof(cur) &&
+                   fwrite(verts + (size_t)first_vert * m->stride, m->stride, (size_t)nverts, file) == nverts &&
+                   fwrite(words, sizeof(*words), nprims, file) == nprims;
+    fclose(file);
+    if (ok) fprintf(stderr, "W3D capture: %s fmt=%u vertices=%u prims=%u bytes=%u\n", path, m->fmt,
+                    (uint32_t)nverts, nprims, (uint32_t)(sizeof(header) + sizeof(cam) + sizeof(world) +
+                    sizeof(cur) + nverts * m->stride + nprims * sizeof(*words)));
+    else fprintf(stderr, "W3D capture: incomplete write to %s\n", path);
+}
 
 void *w3d_plat_arena(uint32_t bytes) { return calloc(1, bytes); }
 void w3d_plat_flush(const void *p, uint32_t bytes) { (void)p; (void)bytes; }
@@ -70,6 +142,16 @@ int w3d_be_begin(const W3dCam *c)
     if (!w3d_defer_flushing && !w3d_be_target()) return 0;   /* (deferred records were checked when taken) */
     copies_free();
     cam = *c;
+#if !defined(HLE_PSP)
+    const uint64_t flip = hle_render_flip_count();
+    static uint64_t diag_camera_flip = ~0ull;
+    if (diag_camera_flip != flip && render_diag_matches(flip)) {
+        diag_camera_flip = flip;
+        LOG("HostW3D diag camera flip %llu: guest=%08x near=%.6f far=%.6f fog=%.6f\n",
+            (unsigned long long)flip, c->camera, c->near_z, c->far_z, c->fog_z);
+        render_diag_matrix("camera-projection", flip, c->proj, 16);
+    }
+#endif
     n_atomics++;
     return 1;
 }
@@ -77,7 +159,18 @@ int w3d_be_begin(const W3dCam *c)
 uint32_t w3d_be_epoch(void) { return epoch; }
 void w3d_be_end(void) { epoch++; }
 void w3d_be_kick(void) {}
-void w3d_be_world(const float m[12]) { memcpy(world, m, sizeof world); }
+void w3d_be_world(const float m[12])
+{
+    memcpy(world, m, sizeof world);
+#if !defined(HLE_PSP)
+    const uint64_t flip = hle_render_flip_count();
+    static uint64_t diag_world_flip = ~0ull;
+    if (diag_world_flip != flip && render_diag_matches(flip)) {
+        diag_world_flip = flip;
+        render_diag_matrix("first-world", flip, m, 12);
+    }
+#endif
+}
 
 int w3d_be_texture(uint32_t raster, int filter, int au, int av, int *aclass)
 {
@@ -93,7 +186,20 @@ int w3d_be_texture(uint32_t raster, int filter, int au, int av, int *aclass)
     return 1;
 }
 
-void w3d_be_state(const W3dState *st) { cur = *st; }
+void w3d_be_state(const W3dState *st)
+{
+    cur = *st;
+#if !defined(HLE_PSP)
+    const uint64_t flip = hle_render_flip_count();
+    static uint64_t diag_state_flip = ~0ull;
+    if (diag_state_flip != flip && render_diag_matches(flip)) {
+        diag_state_flip = flip;
+        LOG("HostW3D diag state flip %llu: ztest=%d zwrite=%d cull=%d fog=%d blend=%d atest=%d light=%d lights=%d lamb=%08x lemis=%08x\n",
+            (unsigned long long)flip, st->ztest, st->zwrite, st->cull, st->fog, st->blend,
+            st->atest, st->light, st->lights, st->lamb, st->lemis);
+    }
+#endif
+}
 
 void *w3d_be_alloc(uint32_t bytes)
 {
@@ -385,6 +491,7 @@ void w3d_be_range(const W3dMeshView *m, const uint8_t *override, uint32_t first_
 {
     n_ranges++;
     cur_path = 1;
+    capture_mesh_range(m, override ? override : m->verts, first_vert, prims, nprims);
     run_prims(m, override ? override : m->verts, first_vert, prims, nprims);
 }
 

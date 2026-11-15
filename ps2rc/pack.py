@@ -11,7 +11,7 @@ Which pack a command uses: --pack NAME / PS2RC_PACK, else local.toml [defaults] 
     python3 pack.py shell [NAME] [--posix]   shell assignments (PACK_*) for the build scripts
     python3 pack.py get [NAME] KEY            one value (dotted key, paths expanded)
     python3 pack.py cheader [NAME] OUT        hle_pack.h for the HLE build (rewritten only when it changes)
-    python3 pack.py profile NAME|- PROFILE BDIR [GEN_DIR] [--posix]
+    python3 pack.py profile NAME|- PROFILE BDIR [GEN_DIR] [--posix] [--audio-off]
                                               shell assignments (PROF_*) of a build profile for mk/build.sh
 """
 import os
@@ -251,7 +251,7 @@ def _profile_paths(pack, items):
     return out
 
 
-def profile(pack, name, bdir, gen_dir=None, posix=False):
+def profile(pack, name, bdir, gen_dir=None, posix=False, audio_off=False):
     """Shell assignments (PROF_*) of the pack's build profile [profile.<name>] for mk/build.sh (the converter's
     ps2rc/convert/build.py applies the same keys): the hooks.def / zones.def copies without the profile's
     exclude_hooks (written into bdir), the source basenames it excludes, its natives / defines / extra sources, and the
@@ -286,6 +286,8 @@ def profile(pack, name, bdir, gen_dir=None, posix=False):
         write_if_changed(zp, "".join(zout))
     gens = []
     for g in prof.get("generators", []) or []:
+        if audio_off and g.get("audio"):
+            continue
         p = os.path.join(gen_dir, g["out"]) if gen_dir else ""
         if not p or not os.path.exists(p):
             raise SystemExit("profile %s: generator %s: no %s (GEN_DIR = a converter work dir's modules/)"
@@ -315,7 +317,9 @@ def write_if_changed(path, text):
 
 def main(argv):
     posix = "--posix" in argv
+    audio_off = "--audio-off" in argv
     argv = [a for a in argv if a != "--posix"]
+    argv = [a for a in argv if a != "--audio-off"]
     if not argv:
         sys.exit(__doc__)
     if argv[0] == "shell":
@@ -326,7 +330,7 @@ def main(argv):
         print("pack: %s%s" % (out, "" if changed else " (unchanged)"))
     elif argv[0] == "profile":                             # profile NAME|- PROFILE BDIR [GEN_DIR]
         name = None if argv[1] == "-" else argv[1]
-        print(profile(load(name), argv[2], argv[3], argv[4] if len(argv) > 4 else None, posix))
+        print(profile(load(name), argv[2], argv[3], argv[4] if len(argv) > 4 else None, posix, audio_off))
     elif argv[0] == "get":
         name, key = (argv[1], argv[2]) if len(argv) > 2 else (None, argv[1])
         p = load(name)

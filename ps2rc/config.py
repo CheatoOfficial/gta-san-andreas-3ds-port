@@ -64,6 +64,8 @@ def posix_path(p):
     p = os.path.abspath(p) if not re.match(r"^[A-Za-z]:", str(p)) and os.name != "posix" else str(p)
     m = re.match(r"^([A-Za-z]):[\\/](.*)$", p)
     if m:
+        if os.environ.get("PS2RC_PATH_STYLE") == "msys":
+            return "/%s/%s" % (m.group(1).lower(), m.group(2).replace("\\", "/"))
         return "/mnt/%s/%s" % (m.group(1).lower(), m.group(2).replace("\\", "/"))
     return p
 

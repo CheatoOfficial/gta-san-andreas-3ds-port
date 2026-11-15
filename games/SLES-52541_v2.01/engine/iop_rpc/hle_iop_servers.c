@@ -10,6 +10,8 @@
  *   - the IOP sound driver (snd_driver.h) + the SPU2-lite engine in lockstep with the virtual clock - the host default
  *     when the build has the audio code (HLE_HAVE_AUDIO_MODEL); with HLE_AUDIO_WAV=<file> everything the engine
  *     renders is written as a 48 kHz WAV;
+ *   - on New 3DS, the same IOP and SPU2 model feeds a bounded NDSP PCM queue; the queue can drop samples when the
+ *     emulated game outruns the real-time audio device;
  *   - a protocol-correct silent responder (no sound) - host runs with --audio silent, PSP builds without the audio
  *     code (build option AUDIO=0) or with ps2rc.cfg audio=0 / no AUDIO folder on the memory stick.
  *   On the PSP the same driver runs in the same lockstep mode (psp/hle_audio_psp.c: sceAudio output, ~2.6 MB) - the
@@ -47,6 +49,10 @@ static void aud_hash_reply(const uint8_t *p, uint32_t n)
 #include "hle_audio_psp.h"                     /* the driver + sceAudio output on the PSP */
 static int aud;
 #define AUD_MODEL() hle_audio_psp_model()
+#elif defined(HLE_3DS)
+#include "audio_3ds.h"
+static Audio3ds *aud;
+#define AUD_MODEL() audio_3ds_model(aud)
 #else
 #include "audio_host.h"
 static AudioHost *aud;
@@ -82,6 +88,9 @@ void hle_pack_iop_init(void)
 #ifdef HLE_PSP
         aud = hle_audio_psp_init(aud_log);           /* reads ps2rc.cfg, incl. audio_log -> hle_audio_log_level */
         LOG("Sound driver: %s\n", aud ? "sound driver running, sceAudio output" : "silent responder");
+#elif defined(HLE_3DS)
+        aud = audio_3ds_create(aud_log, 0);
+        LOG("Sound driver: %s\n", aud ? "IOP/SPU2 model active (NDSP status logged above)" : "silent responder (model init failed)");
 #else
         const char *wav = getenv("HLE_AUDIO_WAV"), *lg = getenv("HLE_AUDIO_LOG");
         if (lg && *lg) hle_audio_log_level = atoi(lg);
@@ -319,6 +328,9 @@ static int audio(R5900Ctx *c, uint32_t fno, uint32_t send, uint32_t ssize, uint3
             PZ_SCOPE(audio);                                 /* driver + engine render (+ its disc reads) */
 #ifdef HLE_PSP
             hle_audio_psp_rpc(fno, send ? gptr(send, ssize) : NULL, ssize, recv ? gptr(recv, rsize) : NULL, rsize, us);
+#elif defined(HLE_3DS)
+            audio_3ds_rpc(aud, fno, send ? gptr(send, ssize) : NULL, ssize,
+                          recv ? gptr(recv, rsize) : NULL, rsize, us);
 #else
             audio_host_rpc(aud, fno, send ? gptr(send, ssize) : NULL, ssize, recv ? gptr(recv, rsize) : NULL, rsize, us);
 #endif
@@ -600,6 +612,10 @@ void hle_pack_iop_report(void)
 #ifdef HLE_PSP
         hle_audio_psp_report();                              /* output statistics; stops the feeder thread */
         aud = 0;
+#elif defined(HLE_3DS)
+        audio_3ds_report(aud);
+        audio_3ds_destroy(aud);
+        aud = NULL;
 #else
         audio_host_destroy(aud);                             /* closes the WAV capture (header) */
         aud = NULL;

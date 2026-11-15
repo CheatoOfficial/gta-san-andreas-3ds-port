@@ -32,3 +32,16 @@ __pycache__/
 # logs and profiler dumps from runs
 *.log
 prof*.bin
+
+# --- 3DS port: private, local-only outputs (never commit) ---
+*.3dsx
+*.smdh
+*.ppm
+session.log
+gpu-frame-*
+/sdmc/
+/3ds-work/
+/publish/
+discmap.txt
+iso_meta.bin
+SLES_*

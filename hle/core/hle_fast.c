@@ -17,7 +17,7 @@ static int nx = -1;
 static void x_load(void)
 {
     nx = 0;
-#ifdef HLE_PSP
+#if defined(HLE_PSP) || defined(HLE_3DS)
     for (int ci = 0; ci < hle_cfg_count(); ci++) {   /* the shared table (hle_cfg.c), whole file */
         const char *k = hle_cfg_key(ci);
         if (k[0] == 'x' && k[1] == '_' && strlen(k + 2) < sizeof xv[0].name && nx < XMAX) {
@@ -56,7 +56,7 @@ int hle_x_opt(const char *name, int def)
     for (int i = 0; i < nxo; i++)
         if (!strcmp(xo[i].name, name)) return xo[i].val;
     if (nx < 0) x_load();
-#ifdef HLE_PSP
+#if defined(HLE_PSP) || defined(HLE_3DS)
     for (int i = 0; i < nx; i++)
         if (!strcmp(xv[i].name, name)) return xv[i].val;
     return def;

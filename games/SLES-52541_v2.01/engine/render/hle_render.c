@@ -32,6 +32,9 @@
 #include "hle_hud.h"                               /* HUD transform (hle_hud.c) */
 #ifdef HLE_PSP
 #include "hle_ge.h"
+#elif defined(HLE_3DS)
+#include "hle_3ds_gfx.h"
+#include <stdlib.h>
 #else
 #include <stdlib.h>
 #endif
@@ -138,6 +141,32 @@ static void im2d_vertex(uint32_t base, uint32_t i, RndVtx *o)
     o->a = gf(p + 0x2C);
 }
 
+static int raster_2d_active(void)
+{
+    if (rnd_on) return 1;
+#if defined(HLE_3DS)
+    return hle_3ds_gfx_ready();
+#else
+    return 0;
+#endif
+}
+
+static void raster_2d_tris(const RndVtx *vertices, int count, const RndState *state)
+{
+    if (rnd_on) hle_raster_tris(vertices, count, state);
+#if defined(HLE_3DS)
+    hle_3ds_gfx_2d_tris(vertices, count, state);
+#endif
+}
+
+static void raster_2d_lines(const RndVtx *vertices, int count, const RndState *state)
+{
+    if (rnd_on) hle_raster_lines(vertices, count, state);
+#if defined(HLE_3DS)
+    hle_3ds_gfx_2d_lines(vertices, count, state);
+#endif
+}
+
 #define MAXV 3072
 static RndVtx tv[MAXV];
 
@@ -168,11 +197,11 @@ static void im2d_emit(int type, uint32_t verts, int nv, uint32_t idx, int ni)
     if (type == 1 || type == 2) {
         int step = type == 1 ? 2 : 1;
         for (int j = 0; j + 1 < n; j += step) {
-            if (k + 2 > MAXV) { hle_raster_lines(tv, k, &st); k = 0; }
+            if (k + 2 > MAXV) { raster_2d_lines(tv, k, &st); k = 0; }
             im2d_vertex(verts, VI(j), &tv[k++]);
             im2d_vertex(verts, VI(j + 1), &tv[k++]);
         }
-        if (k) hle_raster_lines(tv, k, &st);
+        if (k) raster_2d_lines(tv, k, &st);
         return;
     }
     for (int j = 0; j + 2 < n; j += type == 3 ? 3 : 1) {
@@ -180,12 +209,12 @@ static void im2d_emit(int type, uint32_t verts, int nv, uint32_t idx, int ni)
         if (type == 3 || type == 4) { a = VI(j); b = VI(j + 1); d = VI(j + 2); }
         else if (type == 5) { a = VI(0); b = VI(j + 1); d = VI(j + 2); }
         else return;
-        if (k + 3 > MAXV) { hle_raster_tris(tv, k, &st); k = 0; }
+        if (k + 3 > MAXV) { raster_2d_tris(tv, k, &st); k = 0; }
         im2d_vertex(verts, a, &tv[k++]);
         im2d_vertex(verts, b, &tv[k++]);
         im2d_vertex(verts, d, &tv[k++]);
     }
-    if (k) hle_raster_tris(tv, k, &st);
+    if (k) raster_2d_tris(tv, k, &st);
 #undef VI
 }
 
@@ -217,16 +246,16 @@ static void rbuf_emit(uint32_t buf, uint32_t n)
                 float ox = d[o][0], oy = d[o][1];
                 RndVtx s[4] = {{x1 + ox, y1 + oy, u1, v1, 0, 0, 0, a}, {x2 + ox, y1 + oy, u2, v1, 0, 0, 0, a},
                                {x2 + ox, y2 + oy, u2, v2, 0, 0, 0, a}, {x1 + ox, y2 + oy, u1, v2, 0, 0, 0, a}};
-                if (k + 6 > MAXV) { hle_raster_tris(tv, k, &st); k = 0; }
+                if (k + 6 > MAXV) { raster_2d_tris(tv, k, &st); k = 0; }
                 for (int j = 0; j < 6; j++) tv[k++] = s[tri[j]];
             }
         }
         RndVtx q[4] = {{x1, y1, u1, v1, r, g, b, a}, {x2, y1, u2, v1, r, g, b, a}, {x2, y2, u2, v2, r, g, b, a},
                        {x1, y2, u1, v2, r, g, b, a}};
-        if (k + 6 > MAXV) { hle_raster_tris(tv, k, &st); k = 0; }
+        if (k + 6 > MAXV) { raster_2d_tris(tv, k, &st); k = 0; }
         for (int j = 0; j < 6; j++) tv[k++] = q[tri[j]];
     }
-    if (k) hle_raster_tris(tv, k, &st);
+    if (k) raster_2d_tris(tv, k, &st);
 }
 #endif
 
@@ -242,7 +271,13 @@ HLE_FN(drv_camera_begin)
         log_call(H_CAM_BEGIN, c, x);
     }
 #ifndef HLE_PSP
-    if (rnd_on && fb) hle_raster_set_screen((int)gw_ok(fb + 0x0C), (int)gw_ok(fb + 0x10));
+    if (fb) {
+        const int width = (int)gw_ok(fb + 0x0C), height = (int)gw_ok(fb + 0x10);
+        if (rnd_on) hle_raster_set_screen(width, height);
+#if defined(HLE_3DS)
+        hle_3ds_gfx_2d_set_screen(width, height);
+#endif
+    }
 #else
     hle_ge_camera_begin(cam, fb);
 #endif
@@ -265,7 +300,7 @@ HLE_FN(drv_camera_clear)
         log_call(H_CAM_CLEAR, c, x);
     }
     frame_clears++;
-#ifndef HLE_PSP
+#if !defined(HLE_PSP) && !defined(HLE_3DS)
     if (rnd_on) {
         int md = SARG(2);
         if ((md & 2) && w3d_opt_on && w3d_opt_sky && hle_render_screen_raster() &&     /* + clear_fill */
@@ -277,7 +312,19 @@ HLE_FN(drv_camera_clear)
         }
         hle_raster_clear(rgba, md);
     }
-#else
+#elif defined(HLE_3DS)
+    int md = SARG(2);
+    if (rnd_on && hle_3ds_gfx_ready()) {
+        if ((md & 2) && w3d_opt_on && w3d_opt_sky && hle_render_screen_raster() &&
+            (!hle_render_cur_fb() || hle_render_cur_fb() == hle_render_screen_raster()) && hle_sky_clear_fill(md)) {
+            uint32_t fc = hle_render_rs(RS_FOGCOLOR);
+            for (int i = 0; i < 4; i++) rgba[i] = (uint8_t)(fc >> (8 * i));
+            rgba[3] = 0xFF;
+            md |= 1;
+        }
+        hle_3ds_gfx_clear(rgba, md);
+    }
+#elif defined(HLE_PSP)
     hle_ge_clear(ARG(0), rgba, SARG(2));
 #endif
     GUEST_CALL(H_CAM_CLEAR, drv_camera_clear);
@@ -291,13 +338,13 @@ HLE_FN(drv_raster_show)
     flips++;
     if (ARG(0)) screen_raster = ARG(0);
     int wrote = 0;
-#ifndef HLE_PSP
+#if !defined(HLE_PSP) && !defined(HLE_3DS)
     if (rnd_on) {
         char tag[48];
         snprintf(tag, sizeof tag, "thread %d", hle_cur ? hle_cur->id : -1);
         wrote = hle_raster_frame_end(flips, tag);
     }
-#else
+#elif defined(HLE_PSP)
     hle_ge_flip(ARG(0));
 #endif
     if (flips <= 4 || wrote || (flips & 1023) == 0)
@@ -308,6 +355,9 @@ HLE_FN(drv_raster_show)
     frame_prims = frame_quads = frame_clears = 0;
     w3d_frame_end();                                       /* the 3D vertex cache's LRU frame */
     GUEST_CALL(H_SHOW, drv_raster_show);
+#if defined(HLE_3DS)
+    hle_3ds_gfx_present();
+#endif
     if (lg) log_ret(H_SHOW, c);
 }
 
@@ -391,13 +441,13 @@ HLE_FN(drv_2d_line)
 {
     frame_prims++;
 #ifndef HLE_PSP
-    if (rnd_on) {
+    if (raster_2d_active()) {
         RndState st;
         cur_state(&st);
         RndVtx l[2];
         im2d_vertex(ARG(0), ARG(2), &l[0]);
         im2d_vertex(ARG(0), ARG(3), &l[1]);
-        hle_raster_lines(l, 2, &st);
+        raster_2d_lines(l, 2, &st);
     }
 #else
     if (hle_ge_on) {
@@ -414,14 +464,14 @@ HLE_FN(drv_2d_triangle)
 {
     frame_prims++;
 #ifndef HLE_PSP
-    if (rnd_on) {
+    if (raster_2d_active()) {
         RndState st;
         cur_state(&st);
         RndVtx t[3];
         im2d_vertex(ARG(0), ARG(2), &t[0]);
         im2d_vertex(ARG(0), ARG(3), &t[1]);
         im2d_vertex(ARG(0), ARG(4), &t[2]);
-        hle_raster_tris(t, 3, &st);
+        raster_2d_tris(t, 3, &st);
     }
 #else
     if (hle_ge_on) {
@@ -445,7 +495,7 @@ HLE_FN(drv_2d_prim)
     frame_prims++;
 #ifndef HLE_PSP
     if (tracing()) trace_prim("2D primitive", SARG(0), ARG(1), SARG(2), 0, (uint32_t)c->r[31].d[0]);
-    if (rnd_on) im2d_emit(SARG(0), ARG(1), SARG(2), 0, 0);
+    if (raster_2d_active()) im2d_emit(SARG(0), ARG(1), SARG(2), 0, 0);
 #else
     if (hle_ge_on) {
         RndState st;
@@ -470,7 +520,7 @@ HLE_FN(drv_2d_iprim)
     frame_prims++;
 #ifndef HLE_PSP
     if (tracing()) trace_prim("2D indexed", SARG(0), ARG(1), SARG(2), SARG(4), (uint32_t)c->r[31].d[0]);
-    if (rnd_on) im2d_emit(SARG(0), ARG(1), SARG(2), ARG(3), SARG(4));
+    if (raster_2d_active()) im2d_emit(SARG(0), ARG(1), SARG(2), ARG(3), SARG(4));
 #else
     if (hle_ge_on) {
         RndState st;
@@ -541,7 +591,7 @@ HLE_FN(batch_flush)
     if (type == 0 && n && n <= 256) {
         frame_quads += n;
 #ifndef HLE_PSP
-        if (rnd_on) rbuf_emit(buf, n);
+        if (raster_2d_active()) rbuf_emit(buf, n);
 #else
         if (hle_ge_on) {
             RndState st;

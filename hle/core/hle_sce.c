@@ -349,6 +349,7 @@ HLE_SCE(_sceCdSetTimeout) { RET(0); }                                     /* _sc
    player's controls through hle_plat_pad_read - PSP buttons/stick, host nothing pressed) */
 static uint32_t pad_buttons = 0xFFFF;                         /* active low */
 uint16_t hle_dev_pad(uint8_t sticks[4]) __attribute__((weak));   /* optional developer test aid (weak) */
+void hle_dev_pad_observe(uint16_t buttons, const uint8_t sticks[4]) __attribute__((weak));
 HLE_SCE(scePadInit) { hle_trace_call("scePadInit", HLE_ADDR(scePadInit), c); RET(1); }
 HLE_SCE(scePadInit2) { RET(1); }                                     /* scePadInit2 */
 HLE_SCE(scePadEnd) { RET(1); }                                     /* scePadEnd */
@@ -363,6 +364,7 @@ HLE_SCE(scePadRead)                                                 /* scePadRea
     uint8_t st[4] = {0x80, 0x80, 0x80, 0x80};
     uint16_t pad_m = hle_plat_pad_read(st);
     if (hle_dev_pad) pad_m |= hle_dev_pad(st);                       /* a test aid of a developer module (weak) */
+    if (hle_dev_pad_observe) hle_dev_pad_observe(pad_m, st);
     pad_buttons = ~(uint32_t)pad_m & 0xFFFFu;
     d[0] = 0;
     d[1] = 0x73;
