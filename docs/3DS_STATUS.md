@@ -11,6 +11,15 @@ code is probably pessimistic compared with a real ARM11 with VFP.
 * A scripted pad route moves the player (position changes are logged by the dev-pad probe).
 * The IOP sound-driver model runs in lockstep (Azahar reports an NDSP error, so audio output is unverified).
 
+## Setup reproduced from a clean clone (2026-11-15)
+
+A fresh clone of this repository, on a Windows 11 PC with devkitPro and WSL2, ran: `verify-disc`, `convert --use wsl`
+(analysis, translation, generated modules, staged data: all steps passed), `build` (release 3DSX, 11.66 MB), and
+`azahar`: the release build booted in Azahar and drew frames (for example 34,542 triangles in a city frame) with no
+fatal errors in the log. This found and fixed four setup bugs (xargs quoting under WSL, missing PATH for devkitPro's
+shell, a missing texture-converter source, a diagnostic branch that broke release builds). Not reproduced: Linux/macOS,
+Docker mode on this PC (Docker Desktop was not running), `doctor --fix` on a machine without devkitPro.
+
 ## Performance (the blocker)
 
 | Step | Between presents | Main loop / iteration |

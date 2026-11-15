@@ -10,11 +10,11 @@ The first run of `doctor` tells you exactly what is missing.
 | Python 3.11+ and git | python.org, git-scm.com (tick "Add to PATH") | your package manager |
 | **devkitPro** (devkitARM, libctru, citro3d) | the official installer from https://devkitpro.org/wiki/Getting_Started - it also installs the MSYS2 bash the build uses | devkitPro's `dkp-pacman` ([guide](https://devkitpro.org/wiki/devkitPro_pacman)) |
 | 3DS libraries | `python 3ds-port/ps2rc3ds.py doctor --fix` (runs `dkp-pacman -S 3ds-dev`) | same |
-| **Docker** (or a native [pspdev](https://pspdev.github.io/installation.html)) | Docker Desktop | Docker Engine |
+| **PSP toolchain** for the `convert` step: **WSL2 + pspdev** (recommended on Windows), or Docker, or native pspdev | `wsl --install -d Ubuntu`, then `wsl -e bash 3ds-port/scripts/install-pspdev-wsl.sh` (downloads the pinned pspdev release, ~170 MB, into `~/pspdev`) | run `bash 3ds-port/scripts/install-pspdev-wsl.sh`, or Docker, or [pspdev](https://pspdev.github.io/installation.html) |
 | Python packages | `doctor --fix` installs `pyelftools pillow pytest` | same |
 
-Docker is only needed for the `convert` step, because PS2RC compiles its PSP reference build there; the 3DS build
-itself uses only devkitPro.
+The PSP toolchain is only needed for the `convert` step, because PS2RC compiles its PSP reference build there; the 3DS
+build itself uses only devkitPro.
 
 ## 2. Check your disc
 
@@ -30,12 +30,12 @@ These identifiers are facts used to recognise a disc; they are not game data.
 ## 3. Convert (translation + staged data, about 10-30 minutes)
 
 ```bash
-python 3ds-port/ps2rc3ds.py convert "your-disc.iso" --pull
+python 3ds-port/ps2rc3ds.py convert "your-disc.iso" --use wsl      # or: --use docker --pull
 ```
 
 This runs PS2RC's own converter (`python -m ps2rc.convert`) into `3ds-work/work` (analysis, translated C, generated
-modules) and `3ds-work/package/PS2RC_SLES52541` (the staged data folder the 3DS runtime reads). `--pull` allows it to
-download the `pspdev/pspdev` Docker image the first time. `--audio min|none` stages less sound data (default `all`,
+modules) and `3ds-work/package/PS2RC_SLES52541` (the staged data folder the 3DS runtime reads). With `--use docker`, `--pull` allows it to
+download the `pspdev/pspdev` image the first time. `--audio min|none` stages less sound data (default `all`,
 about 2.9 GB). Output is large (about 4 GB) and game-derived: keep it private.
 
 ## 4. Build

@@ -33,7 +33,7 @@ Details, measurements and the open work list: [docs/3DS_STATUS.md](docs/3DS_STAT
   Dump your own disc with an optical drive. This repository does not link to, host, or describe where to find disc
   images, and issues or pull requests that do will be closed.
 * A PC (Windows 10/11, Linux or macOS), about **15 GB** free disk space, Python 3.11+, git, devkitPro, and
-  Docker (or a native pspdev toolchain) for the conversion step.
+  WSL2 with pspdev (installer script included), or Docker, or a native pspdev toolchain for the conversion step.
 * For hardware: a New 3DS / New 2DS XL with custom firmware, Homebrew Launcher and about 4 GB on the SD card.
 
 Everything made from your disc (translated C, staged assets, 3DSX builds, logs, captures) stays on your machine
@@ -46,7 +46,7 @@ under `3ds-work/`, which is git-ignored. **Never share, commit or upload any of 
 git clone https://github.com/CheatoOfficial/ps2rc-3ds.git && cd ps2rc-3ds
 python 3ds-port/ps2rc3ds.py doctor --fix          # checks/installs Python packages and 3DS libraries
 python 3ds-port/ps2rc3ds.py verify-disc "path/to/your-disc.iso"
-python 3ds-port/ps2rc3ds.py convert     "path/to/your-disc.iso" --pull   # ~10-30 min, uses Docker for PS2RC's PSP build
+python 3ds-port/ps2rc3ds.py convert     "path/to/your-disc.iso" --use wsl   # ~10-30 min; or --use docker --pull
 python 3ds-port/ps2rc3ds.py build                  # release 3DSX  (add --mode profile for the timing build)
 python 3ds-port/ps2rc3ds.py test                   # host tests, no game data needed
 python 3ds-port/ps2rc3ds.py azahar --azahar path/to/azahar.exe      # private emulator profile, minimized

@@ -89,9 +89,12 @@ def cmd_doctor(a):
         line(have, f"Python package {pipname}", f"python -m pip install {pipname}   (or: doctor --fix)")
     docker_up = shutil.which("docker") is not None and subprocess.call(
         ["docker", "info"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
-    line(docker_up or shutil.which("psp-gcc") is not None,
-         "Docker (running) or a native pspdev toolchain (only for the `convert` step, which compiles PS2RC's PSP reference)",
-         "start Docker Desktop / the Docker daemon (easiest), or install pspdev: https://pspdev.github.io/installation.html")
+    wsl_pspdev = IS_WIN and shutil.which("wsl.exe") is not None and subprocess.call(
+        ["wsl.exe", "-e", "bash", "-lc", "test -x ~/pspdev/bin/psp-gcc"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+    line(wsl_pspdev or docker_up or shutil.which("psp-gcc") is not None,
+         "pspdev for the `convert` step (WSL2 ~/pspdev, a running Docker daemon, or psp-gcc on PATH)",
+         "WSL2: wsl -e bash 3ds-port/scripts/install-pspdev-wsl.sh   (or start Docker Desktop, or see https://pspdev.github.io/installation.html)")
     dk = devkitpro()
     line(dk is not None, f"devkitPro at {dk}" if dk else "devkitPro", "install from https://devkitpro.org/wiki/Getting_Started")
     bash = find_bash()
