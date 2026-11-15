@@ -9,7 +9,7 @@ DEST="$HOME/pspdev"
 if [ -x "$DEST/bin/psp-gcc" ]; then echo "already installed: $("$DEST/bin/psp-gcc" --version | head -1)"; exit 0; fi
 echo "Downloading $URL (about 170 MB) ..."
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-curl -fL --retry 3 -o "$TMP/$ASSET" "$URL"
+curl -fSL --progress-bar --retry 3 -o "$TMP/$ASSET" "$URL"
 mkdir -p "$DEST"
 tar -xzf "$TMP/$ASSET" -C "$HOME"      # the archive's top directory is pspdev/
 [ -x "$DEST/bin/psp-gcc" ] || { echo "unexpected archive layout; expected $DEST/bin/psp-gcc" >&2; exit 1; }
