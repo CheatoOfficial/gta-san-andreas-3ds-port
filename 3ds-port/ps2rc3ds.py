@@ -173,6 +173,8 @@ def cmd_build(a):
         "REPO": msys(REPO), "WORK": msys(WORK), "PKG": msys(PKG), "BDIR": msys(BUILD), "DIST": msys(DIST),
         "MODE": a.mode, "JOBS": str(a.jobs or os.cpu_count() or 4),
     })
+    if IS_WIN:   # devkitPro's login shell resets PATH: hand it the Python running this script
+        env.setdefault("PYTHON_BIN", msys(Path(sys.executable).parent))
     if devkitpro():
         env["DEVKITPRO"] = msys(devkitpro()) if not IS_WIN else "/opt/devkitpro"
     for k in ("VERT_BUDGET", "MAX_SECONDS", "PYTHON_BIN"):
