@@ -6,6 +6,7 @@
 
 #include "hle.h"
 #include "hle_plat.h"
+#include "hle_3ds_profile.h"
 #include "texconv.h"
 
 #include <3ds/allocator/linear.h>
@@ -17,10 +18,10 @@
 #endif
 
 #ifndef HLE_3DS_TEX_SLOTS
-#define HLE_3DS_TEX_SLOTS 256
+#define HLE_3DS_TEX_SLOTS HLE_3DS_DEFAULT_TEX_SLOTS
 #endif
 #ifndef HLE_3DS_TEX_MAX_BYTES
-#define HLE_3DS_TEX_MAX_BYTES (16u * 1024u * 1024u)
+#define HLE_3DS_TEX_MAX_BYTES HLE_3DS_DEFAULT_TEX_BYTES
 #endif
 #define HLE_3DS_TEX_DECODE_BYTES (1024u * 1024u + 4096u)
 

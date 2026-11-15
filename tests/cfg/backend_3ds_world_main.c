@@ -22,5 +22,10 @@ int main(void) {
     for(int i=0;i<3;i++) for(int j=0;j<4;j++) assert(nearf(all[i+3].clip[j],expected[i][j]));
     w3d_citro3d_frame_reset(); assert(w3d_be_begin(&c)); w3d_be_state(&s);
     assert(w3d_be_tris(tris,3)==NULL); assert(w3d_citro3d_frame_vertex_count()==0);
+    /* Fill the selected model's bounded buffer, then ensure exhaustion never advances past its end. */
+    w3d_citro3d_frame_reset(); assert(w3d_be_begin(&c)); w3d_be_state(&s); w3d_be_world(w);
+    for (unsigned i=0;i<W3D_C3D_FRAME_VERTEX_CAPACITY/3u+2u;i++) w3d_be_tris(tris,3);
+    assert((unsigned)w3d_citro3d_frame_vertex_count()<=W3D_C3D_FRAME_VERTEX_CAPACITY);
+    assert((unsigned)w3d_citro3d_frame_batch_count()<=W3D_C3D_BATCH_CAPACITY);
     puts("actual 3DS backend model-space transform, world guard and replay passed");
 }

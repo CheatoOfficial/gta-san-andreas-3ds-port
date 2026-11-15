@@ -11,6 +11,13 @@
 #include "hle_plat.h"
 #include "hle_prof.h"
 #include "hle_3ds_gfx.h"
+#include "hle_3ds_profile.h"
+
+#if HLE_3DS_OLD_MODEL
+/* Leave the rest of the launcher's memory allowance to malloc (including 32 MiB guest RAM).
+   libctru's automatic split can otherwise leave too little normal heap on Old 3DS. */
+u32 __ctru_linear_heap_size = HLE_3DS_LINEAR_HEAP_BYTES;
+#endif
 
 #define HLE_3DS_ROOT "sdmc:/3ds/ps2rc-sa/"
 
@@ -86,7 +93,33 @@ int main(void)
 {
     gfxInitDefault();
     consoleInit(GFX_BOTTOM, NULL);
-    printf("PS2RC New 3DS runtime\n");
+    bool is_new = false;
+    if (R_FAILED(APT_CheckNew3DS(&is_new))) {
+        printf("FATAL: cannot identify the console model\n");
+        wait_start();
+        gfxExit();
+        return 1;
+    }
+    printf("PS2RC 3DS runtime (%s profile)\n", HLE_3DS_PROFILE_NAME);
+    if (!is_new && !HLE_3DS_OLD_MODEL) {
+        printf("This build needs New 3DS memory. Build with --model old3ds.\n");
+        wait_start();
+        gfxExit();
+        return 1;
+    }
+    /* Never request New 3DS speedup on an Old 3DS. */
+    if (is_new) osSetSpeedupEnable(true);
+    LOG("3DS resources: old_profile=%u new_hardware=%u heap_KiB=%lu linear_KiB=%lu\n",
+        (unsigned)HLE_3DS_OLD_MODEL, (unsigned)is_new,
+        (unsigned long)(envGetHeapSize() / 1024u), (unsigned long)(envGetLinearHeapSize() / 1024u));
+    if (envGetHeapSize() < HLE_RAM_SIZE + 4u * 1024u * 1024u) {
+        printf("FATAL: insufficient normal heap for guest RAM and runtime\n");
+        printf("Try a homebrew launch with a larger application memory allowance.\n");
+        hle_plat_log_flush();
+        wait_start();
+        gfxExit();
+        return 1;
+    }
     printf("PS2RC translated ARM code; game data stays on SD\n\n");
     if (R_FAILED(fsInit())) {
         printf("FATAL: SD filesystem service unavailable\n");

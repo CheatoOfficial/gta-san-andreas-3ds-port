@@ -47,10 +47,6 @@
 
 #define HLE_3DS_RGBA8(r, g, b, a) ((uint32_t)(r) | (uint32_t)(g) << 8 | (uint32_t)(b) << 16 | (uint32_t)(a) << 24)
 #define CLEAR_COLOR HLE_3DS_RGBA8(0x10, 0x18, 0x20, 0xFF)
-#define HLE_3DS_2D_VERTEX_CAPACITY 16384u
-#define HLE_3DS_2D_BATCH_CAPACITY 2048u
-#define HLE_3DS_SKY_VERTEX_CAPACITY 1024u
-#define HLE_3DS_SKY_BATCH_CAPACITY 32u
 #define DISPLAY_TRANSFER_FLAGS \
     (GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) | \
      GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB8) | \
@@ -198,7 +194,9 @@ int hle_3ds_gfx_init(void)
     overlay_vertex_buffer = linearAlloc(sizeof(Hle3dsVertex) * HLE_3DS_2D_VERTEX_CAPACITY);
     sky_vertex_buffer = linearAlloc(sizeof(Hle3dsVertex) * HLE_3DS_SKY_VERTEX_CAPACITY);
     if (!vertex_buffer || !overlay_vertex_buffer || !sky_vertex_buffer) goto fail;
+#if HLE_3DS_CAPTURE_MAX > 0
     capture_rgb = linearAlloc(240u * 400u * 3u);
+#endif
     C3D_BufInfo *buffers = C3D_GetBufInfo();
     BufInfo_Init(buffers);
     BufInfo_Add(buffers, vertex_buffer, sizeof(Hle3dsVertex), 4, 0x3210);

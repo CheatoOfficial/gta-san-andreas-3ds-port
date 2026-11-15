@@ -11,6 +11,7 @@ Add --history to also scan every commit made on top of the base (run it before p
 not proof: it cannot recognise game data it has no pattern for. Run it before every commit; CI runs it too.
 """
 import re
+import io
 import subprocess
 import sys
 from pathlib import Path
@@ -33,13 +34,25 @@ def git(*a):
     return subprocess.run(["git", *a], cwd=REPO, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
+def required_git(*a):
+    result = git(*a)
+    if result.returncode:
+        raise RuntimeError("git " + " ".join(a) + " failed")
+    return result.stdout
+
+
 def split_z(out):
     return [n for n in out.split(chr(0)) if n]
 
 
+def have_base():
+    result = git("cat-file", "-t", BASE)
+    return result.returncode == 0 and result.stdout.strip() == "commit"
+
+
 def files():
     """Files this port added or changed (renames count as additions), NUL-delimited so odd names are safe."""
-    if git("rev-parse", "--verify", "-q", BASE).returncode == 0:
+    if have_base():
         names = set(split_z(git("diff", "-z", "--name-only", "--no-renames", "--diff-filter=AM", BASE).stdout))
         names |= set(split_z(git("ls-files", "-z", "--others", "--exclude-standard").stdout))
     else:
@@ -70,22 +83,60 @@ def bad_name(name):
 
 
 def check_history(problems):
-    """Everything this port ever committed on top of the base commit, including files deleted later."""
-    if git("rev-parse", "--verify", "-q", BASE).returncode != 0:
-        print("check-no-game-data: base commit not available, history scan skipped")
+    """Scan actual blobs introduced on every local ref beyond the upstream base, including deleted files."""
+    if not have_base():
+        problems.append("history: upstream base unavailable; cannot certify history scan")
         return
-    seen = set()
-    for name in split_z(git("log", "-z", "--format=", "--name-only", "--no-renames", "--diff-filter=AM", f"{BASE}..HEAD").stdout):
-        if bad_name(name) and name not in seen:
-            seen.add(name)
-            problems.append(f"history: {name}: binary/media/game-derived file type was committed at some point")
-    added, current = [], ""
-    for l in git("log", "--format=", "-p", "--no-renames", f"{BASE}..HEAD").stdout.splitlines():
-        if l.startswith("+++ "):
-            current = l[6:] if l.startswith("+++ b/") else ""
-        elif l.startswith("+") and current not in ALLOW_PII_FILES:
-            added.append(l[1:])
-    scan_text("history (added lines)", chr(10).join(added), problems)
+    objects = {}
+    for commit in required_git("rev-list", "--all", "HEAD", "^" + BASE).splitlines():
+        entries = split_z(required_git("diff-tree", "--root", "-m", "--no-commit-id", "-r", "-z",
+                                       "--raw", "--no-renames", "--diff-filter=AM", commit))
+        if len(entries) % 2:
+            raise RuntimeError("invalid git history listing")
+        for header, name in zip(entries[::2], entries[1::2]):
+            oid = header.split()[3]
+            objects.setdefault(oid, set()).add(name)
+    if not objects:
+        return
+    # Inspect sizes/types first: never load a committed disc image or oversized blob into memory to reject it.
+    metadata = subprocess.run(["git", "cat-file", "--batch-check"], cwd=REPO, capture_output=True,
+                              input="".join(oid + "\n" for oid in objects).encode("ascii"), check=True)
+    lines = metadata.stdout.splitlines()
+    if len(lines) != len(objects):
+        raise RuntimeError("incomplete git blob metadata")
+    readable = {}
+    for (oid, names), line in zip(objects.items(), lines):
+        header = line.split()
+        if len(header) != 3 or header[0].decode("ascii") != oid or header[1] != b"blob":
+            raise RuntimeError("invalid git blob metadata")
+        size = int(header[2])
+        for name in sorted(names):
+            label = f"history {oid[:12]}:{name}"
+            if bad_name(name):
+                problems.append(f"{label}: binary/media/game-derived file type was committed")
+            elif size > 1_000_000:
+                problems.append(f"{label}: too large for a source file")
+            else:
+                readable.setdefault(oid, set()).add(name)
+    if not readable:
+        return
+    batch = subprocess.run(["git", "cat-file", "--batch"], cwd=REPO, capture_output=True,
+                           input="".join(oid + "\n" for oid in readable).encode("ascii"), check=True)
+    stream = io.BytesIO(batch.stdout)
+    for oid, names in readable.items():
+        header = stream.readline().split()
+        if len(header) != 3 or header[0].decode("ascii") != oid or header[1] != b"blob":
+            raise RuntimeError("invalid git blob response")
+        size = int(header[2])
+        data = stream.read(size)
+        if len(data) != size or stream.read(1) != b"\n":
+            raise RuntimeError("truncated git blob response")
+        for name in sorted(names):
+            label = f"history {oid[:12]}:{name}"
+            try:
+                scan_text(name, data.decode("utf-8", errors="strict"), problems)
+            except UnicodeDecodeError:
+                problems.append(f"{label}: not UTF-8 text")
 
 
 def main():
@@ -105,7 +156,10 @@ def main():
             continue
         scan_text(name, text, problems)
     if "--history" in sys.argv:
-        check_history(problems)
+        try:
+            check_history(problems)
+        except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            problems.append(f"history scan failed: {exc}")
     if problems:
         print("check-no-game-data: FAILED")
         for q in problems:

@@ -13,10 +13,12 @@ Everything game-derived stays under ./3ds-work/ (git-ignored). Nothing is ever d
 the tools you choose to run (pip, dkp-pacman, docker pull with --pull) fetch.
 """
 import argparse
+import configparser
 import hashlib
 import os
 import platform
 import shutil
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -173,8 +175,9 @@ def cmd_build(a):
         return 1
     env = dict(os.environ)
     env.update({
-        "REPO": msys(REPO), "WORK": msys(WORK), "PKG": msys(PKG), "BDIR": msys(BUILD), "DIST": msys(DIST),
-        "MODE": a.mode, "JOBS": str(a.jobs or os.cpu_count() or 4),
+        "REPO": msys(REPO), "WORK": msys(WORK), "PKG": msys(PKG),
+        "BDIR": msys(BUILD if a.model == "new3ds" else WORKROOT / "build-3ds-old3ds"), "DIST": msys(DIST),
+        "MODEL": a.model, "MODE": a.mode, "JOBS": str(a.jobs or os.cpu_count() or 4),
     })
     if IS_WIN:   # devkitPro's login shell resets PATH: hand it the Python running this script
         env.setdefault("PYTHON_BIN", msys(Path(sys.executable).parent))
@@ -185,34 +188,44 @@ def cmd_build(a):
         if v is not None:
             env[k] = str(v)
     script = msys(REPO / "3ds-port" / "scripts" / "build-3ds.sh")
-    return run([bash, "-lc", f"bash '{script}'"], env=env)
+    return run([bash, "-lc", f"bash {shlex.quote(script)}"], env=env)
 
 
 def cmd_test(a):
     bash = find_bash() or shutil.which("bash")
     rc = 0
     for s in ("host-tests.sh", "adapter-equiv.sh"):
-        rc |= run([bash, "-lc", f"PATH=/usr/bin:$PATH bash '{msys(REPO / '3ds-port' / 'scripts' / s)}'"])
+        rc |= run([bash, "-lc", "PATH=/usr/bin:$PATH bash " + shlex.quote(msys(REPO / '3ds-port' / 'scripts' / s))])
     rc |= run([sys.executable, "3ds-port/scripts/check-no-game-data.py", "--history"], cwd=REPO)
-    rc |= run([sys.executable, "-m", "pytest", "-q", "tests/cfg", "-m", "not wsl and not oracle and not psp and not slow and not needs_game"],
+    rc |= run([sys.executable, "-m", "pytest", "-q", "tests/cfg", "3ds-port/tests", "-m", "not wsl and not oracle and not psp and not slow and not needs_game"],
               cwd=REPO)
     print("\nALL TESTS PASSED" if rc == 0 else "\nSOME TESTS FAILED")
     return 1 if rc else 0
 
 
 # ---------------------------------------------------------------- staging
-def newest_3dsx():
-    cands = sorted(DIST.glob("*.3dsx"), key=lambda p: p.stat().st_mtime, reverse=True)
+def newest_3dsx(model="new3ds"):
+    prefix = "ps2rc-3ds-old3ds" if model == "old3ds" else "ps2rc-3ds"
+    # Exact names prevent staging the other model's newest build by accident.
+    cands = [DIST / f"{prefix}-{mode}.3dsx" for mode in ("release", "profile")]
+    cands = sorted((p for p in cands if p.is_file()), key=lambda p: p.stat().st_mtime, reverse=True)
     return cands[0] if cands else None
 
 
 def same_file(s, d):
-    """Same size and same modification time (copy2 and hard links preserve it): a reconversion changes it."""
+    """Compare content: extracted files can retain the same size AND timestamp after a change."""
     try:
         a, b = s.stat(), d.stat()
     except OSError:
         return False
-    return a.st_size == b.st_size and int(a.st_mtime) == int(b.st_mtime)
+    if a.st_size != b.st_size:
+        return False
+    if os.path.samefile(s, d):
+        return True
+    def digest(p):
+        with p.open("rb") as f:
+            return hashlib.file_digest(f, "sha256").digest()
+    return digest(s) == digest(d)
 
 
 def copy_tree(src, dst, link=False):
@@ -265,7 +278,10 @@ def cmd_stage_sd(a):
         return 1
     total = sum(p.stat().st_size for item in RUNTIME_ITEMS for p in ([PKG / item] if (PKG / item).is_file() else (PKG / item).rglob("*")) if p.is_file())
     dest = sd / SD_SUBDIR
-    tdsx = Path(a.threedsx) if a.threedsx else newest_3dsx()
+    tdsx = Path(a.threedsx) if a.threedsx else newest_3dsx(a.model)
+    if tdsx is None:
+        print(f"No {a.model} 3DSX found; build that model first.", file=sys.stderr)
+        return 1
     print(f"Will copy {total / 1e9:.2f} GB + {tdsx} into {dest}")
     if not a.yes:
         print("Dry run only. Re-run with --yes to copy.")
@@ -273,6 +289,25 @@ def cmd_stage_sd(a):
     stage_runtime(dest, tdsx)
     print("Done. Launch the .3dsx from the Homebrew Launcher.")
     return 0
+
+
+def configure_azahar(cfg, model):
+    """Set the requested hardware model even when a portable config already exists."""
+    ini = configparser.ConfigParser(interpolation=None, strict=False)
+    ini.optionxform = str
+    if cfg.exists():
+        ini.read(cfg, encoding="utf-8-sig")
+    else:
+        ini.read_dict({"Core": {"use_cpu_jit\\default": "false", "use_cpu_jit": "true",
+                                "cpu_clock_percentage\\default": "false", "cpu_clock_percentage": "100"},
+                       "Renderer": {"use_vsync\\default": "false", "use_vsync": "true"},
+                       "Audio": {"audio_emulation\\default": "true"}})
+    if not ini.has_section("System"):
+        ini.add_section("System")
+    ini["System"]["is_new_3ds\\default"] = "false"
+    ini["System"]["is_new_3ds"] = "false" if model == "old3ds" else "true"
+    with cfg.open("w", encoding="utf-8") as f:
+        ini.write(f, space_around_delimiters=False)
 
 
 def cmd_azahar(a):
@@ -284,15 +319,11 @@ def cmd_azahar(a):
     cfgdir = user / "config"
     cfgdir.mkdir(parents=True, exist_ok=True)
     cfg = cfgdir / "qt-config.ini"
-    if not cfg.exists():
-        cfg.write_text("[Core]\nuse_cpu_jit\\default=false\nuse_cpu_jit=true\ncpu_clock_percentage\\default=false\n"
-                       "cpu_clock_percentage=100\n[System]\nis_new_3ds\\default=false\nis_new_3ds=true\n"
-                       "[Renderer]\nuse_vsync\\default=false\nuse_vsync=true\n[Audio]\naudio_emulation\\default=true\n",
-                       encoding="utf-8")
-    tdsx = Path(a.threedsx) if a.threedsx else newest_3dsx()
+    tdsx = Path(a.threedsx) if a.threedsx else newest_3dsx(a.model)
     if tdsx is None:
         print("No 3DSX found; run `build` first.", file=sys.stderr)
         return 1
+    configure_azahar(cfg, a.model)
     dest = user / "sdmc" / SD_SUBDIR
     for stale in list(dest.glob("session.log")) + list(dest.glob("gpu-frame-*")):
         stale.unlink()                       # old logs/captures from other builds would contaminate this run
@@ -320,12 +351,15 @@ def main():
     p.add_argument("--pull", action="store_true", help="allow downloading the pspdev Docker image")
     p.add_argument("--jobs", type=int); p.set_defaults(f=cmd_convert)
     p = sub.add_parser("build"); p.add_argument("--mode", choices=["release", "profile"], default="release")
+    p.add_argument("--model", choices=["new3ds", "old3ds"], default="new3ds")
     p.add_argument("--vert-budget", dest="vert_budget", type=int); p.add_argument("--max-seconds", dest="max_seconds", type=int)
     p.add_argument("--python-bin", dest="python_bin"); p.add_argument("--jobs", type=int); p.set_defaults(f=cmd_build)
     p = sub.add_parser("test"); p.set_defaults(f=cmd_test)
     p = sub.add_parser("stage-sd"); p.add_argument("sd_root"); p.add_argument("--3dsx", dest="threedsx")
+    p.add_argument("--model", choices=["new3ds", "old3ds"], default="new3ds")
     p.add_argument("--yes", action="store_true"); p.set_defaults(f=cmd_stage_sd)
     p = sub.add_parser("azahar"); p.add_argument("--azahar", required=True); p.add_argument("--3dsx", dest="threedsx")
+    p.add_argument("--model", choices=["new3ds", "old3ds"], default="new3ds")
     p.add_argument("--visible", action="store_true"); p.set_defaults(f=cmd_azahar)
     a = ap.parse_args()
     return a.f(a)
