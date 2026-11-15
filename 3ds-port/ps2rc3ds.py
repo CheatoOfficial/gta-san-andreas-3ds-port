@@ -87,9 +87,11 @@ def cmd_doctor(a):
             run([sys.executable, "-m", "pip", "install", pipname])
             have = py_has(mod)
         line(have, f"Python package {pipname}", f"python -m pip install {pipname}   (or: doctor --fix)")
-    line(shutil.which("docker") is not None or shutil.which("psp-gcc") is not None,
-         "Docker or a native pspdev toolchain (only for the `convert` step, which compiles PS2RC's PSP reference)",
-         "install Docker Desktop (easiest) or pspdev: https://pspdev.github.io/installation.html")
+    docker_up = shutil.which("docker") is not None and subprocess.call(
+        ["docker", "info"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+    line(docker_up or shutil.which("psp-gcc") is not None,
+         "Docker (running) or a native pspdev toolchain (only for the `convert` step, which compiles PS2RC's PSP reference)",
+         "start Docker Desktop / the Docker daemon (easiest), or install pspdev: https://pspdev.github.io/installation.html")
     dk = devkitpro()
     line(dk is not None, f"devkitPro at {dk}" if dk else "devkitPro", "install from https://devkitpro.org/wiki/Getting_Started")
     bash = find_bash()
