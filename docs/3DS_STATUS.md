@@ -43,7 +43,18 @@ Docker mode on this PC (Docker Desktop was not running), `doctor --fix` on a mac
 ## Not verified
 
 Physical button input, audio output, sustained gameplay, missions, saving, real-hardware speed and memory (the game
-is tight: linear heap free dips under 1 MB in Azahar), and the old New 3DS. Nothing here supports "playable".
+is tight: linear heap free dips under 1 MB in Azahar), and the Old 3DS family. Nothing here supports "playable".
+
+## Old-model profile (2026-11-15)
+
+`--model old3ds` selects smaller bounded CPU/GPU buffers, a 2 MiB texture cache, an 8 MiB linear heap reservation
+and modifier controls for consoles without ZL/ZR or a C-stick. The model has a separate object directory and named
+artifacts; staging and Azahar also accept `--model old3ds`.
+
+Both profiles pass the game-free host checks and native ARM11 compilation against the installed SDK.
+This is **not a full translated-game link or runtime validation**. All performance figures above predate this profile
+and describe New-model emulator observations. Old-model startup, memory headroom, scene completeness, controls,
+audio and speed remain unverified. See [3DS_OLD_MODEL.md](3DS_OLD_MODEL.md) for the acceptance plan.
 
 ## Known issues from the pre-publication review (2026-11-15)
 
@@ -61,6 +72,8 @@ is tight: linear heap free dips under 1 MB in Azahar), and the old New 3DS. Noth
   for paths with spaces by quoting; unusual path characters are untested.
 
 ## Open work (good first contributions)
+
+Complete the Old-model acceptance checks and the publication checks in [HANDOFF.md](HANDOFF.md) before claiming compatibility.
 
 1. **Get a hardware profile log** ([3DS_HARDWARE_TEST.md](3DS_HARDWARE_TEST.md)). It decides what comes next.
 2. Attribute the `render_scene` / `camera_show` self time (add profiler zones around the HLE hooks, flush, state and

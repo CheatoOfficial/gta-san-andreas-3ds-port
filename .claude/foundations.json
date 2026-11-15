@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 2,
+  "generator": "repo-foundations",
+  "generatorVersion": "1.0.0",
+  "updatedAt": "2026-11-15T14:15:19Z",
+  "stack": {
+    "languages": ["c", "python", "assembly", "shell"],
+    "packageManager": null,
+    "testRunner": "pytest",
+    "multiAgent": true
+  },
+  "modules": {
+    "docs": {
+      "installed": true,
+      "source": "custom",
+      "moduleVersion": 1,
+      "paths": {"claudeMd": "CLAUDE.md"}
+    },
+    "rules": {
+      "installed": true,
+      "source": "custom",
+      "moduleVersion": 1,
+      "paths": {"claudeMd": "AGENTS.md"}
+    },
+    "testing": {"installed": false}
+  }
+}

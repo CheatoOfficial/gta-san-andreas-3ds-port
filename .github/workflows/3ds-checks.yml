@@ -14,3 +14,7 @@ jobs:
         run: bash 3ds-port/scripts/adapter-equiv.sh
       - name: No game data / personal paths
         run: python3 3ds-port/scripts/check-no-game-data.py --history
+      - name: Port tooling regressions (synthetic fixtures only)
+        run: |
+          python3 -m pip install pytest
+          python3 -m pytest -q 3ds-port/tests

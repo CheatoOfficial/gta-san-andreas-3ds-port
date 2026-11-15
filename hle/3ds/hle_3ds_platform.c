@@ -12,6 +12,7 @@
 #include "hle_plat.h"
 #include "hle_memcard.h"
 #include "hle_3ds_padmap.h"
+#include "hle_3ds_profile.h"
 
 #define HLE_3DS_ROOT "sdmc:/3ds/ps2rc-sa/"
 #define HLE_3DS_MAX_VFILES 512
@@ -170,12 +171,15 @@ uint16_t hle_plat_pad_read(uint8_t sticks[4])
 {
     hidScanInput();
     const u32 keys = hidKeysHeld();
-    const uint16_t buttons = hle_3ds_pad_map_buttons(keys);
     circlePosition circle = {0, 0}, cstick = {0, 0};
     hidCircleRead(&circle);
+#if HLE_3DS_OLD_MODEL
+    return hle_3ds_pad_map_old(keys, circle.dx, circle.dy, sticks);
+#else
     irrstCstickRead(&cstick);
     hle_3ds_pad_map_sticks(circle.dx, circle.dy, cstick.dx, cstick.dy, sticks);
-    return buttons;
+    return hle_3ds_pad_map_buttons(keys);
+#endif
 }
 
 void hle_plat_backtrace(void) {}

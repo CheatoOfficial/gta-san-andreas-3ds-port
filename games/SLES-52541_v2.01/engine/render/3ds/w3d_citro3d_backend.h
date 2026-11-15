@@ -3,11 +3,7 @@
 
 #include "hle_w3d.h"
 #include "w3d_citro3d_adapter.h"
-
-/* The city probe reached the old 131k vertex limit; this 196k size tests its effect on omitted meshes. */
-#define W3D_C3D_FRAME_VERTEX_CAPACITY 196608
-#define W3D_C3D_TEMP_VERTEX_CAPACITY 32768
-#define W3D_C3D_BATCH_CAPACITY 4096
+#include "hle_3ds_profile.h"
 
 typedef struct {
     uint32_t first_vertex, vertex_count, raster;

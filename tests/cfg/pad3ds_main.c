@@ -42,6 +42,22 @@ int main(void)
     hle_3ds_pad_map_sticks(0, 0, 10, 10, sticks);
     assert(sticks[0] == 128 && sticks[1] == 128); /* inside C-stick radial deadzone */
 
+    /* Old hardware has neither a C-stick nor ZL/ZR. All second-stick and shoulder actions remain reachable. */
+    assert(hle_3ds_pad_map_old(KEY_DRIGHT | KEY_DUP | KEY_A, 156, 0, sticks) == (1u << 14));
+    assert(sticks[0] == 255 && sticks[1] == 0 && sticks[2] == 255);
+    assert(hle_3ds_pad_map_old(KEY_SELECT | KEY_DLEFT, 0, 0, sticks) == (1u << 7));
+    assert(sticks[0] == 128 && sticks[1] == 128);
+    assert(hle_3ds_pad_map_old(KEY_SELECT | KEY_L | KEY_R, 0, 0, sticks) == ((1u << 8) | (1u << 9)));
+    assert(hle_3ds_pad_map_old(KEY_SELECT | KEY_A, 0, 0, sticks) == (1u << 1));
+    assert(hle_3ds_pad_map_old(KEY_SELECT | KEY_X, 0, 0, sticks) == (1u << 2));
+    assert(hle_3ds_pad_map_old(KEY_SELECT | KEY_A | KEY_X, 0, 0, sticks) == ((1u << 1) | (1u << 2)));
+    assert(hle_3ds_pad_map_old(KEY_L | KEY_R, 0, 0, sticks) == ((1u << 10) | (1u << 11)));
+    assert(hle_3ds_pad_map_old(KEY_SELECT, 0, 0, sticks) == 1u);
+    assert(hle_3ds_pad_map_old(KEY_ZL | KEY_ZR | KEY_DUP | KEY_DDOWN, 0, 0, sticks) == 0);
+    assert(sticks[0] == 128 && sticks[1] == 128);
+    assert(hle_3ds_pad_map_old(0, 0, 0, sticks) == 0);
+    assert(sticks[0] == 128 && sticks[1] == 128 && sticks[2] == 128 && sticks[3] == 128);
+
     puts("3DS HID mapping: buttons, active PS2 positions, stick order, Y direction, deadzones and neutral passed");
     return 0;
 }

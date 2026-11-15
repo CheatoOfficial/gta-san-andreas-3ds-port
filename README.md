@@ -4,6 +4,7 @@
 **SLES-52541 v2.01**) to the **New Nintendo 3DS / New 2DS XL** family, built on the
 [PS2RC](https://github.com/SandstoneDev/PS2RC) PlayStation 2 recompiler runtime (devkitPro, libctru, Citro3D, PICA200).
 You supply your own copy of the disc; no game files are included.
+An [experimental Old 3DS / original 2DS profile](docs/3DS_OLD_MODEL.md) is also available; full game execution on old hardware is unverified.
 
 > Based on PS2RC by SandstoneDev
 > https://github.com/SandstoneDev/PS2RC
@@ -25,6 +26,7 @@ Take-Two Interactive, Sony Interactive Entertainment or Nintendo. "Grand Theft A
 | Input | A scripted pad route moves the player in Azahar. **Physical buttons are untested** |
 | Audio | The sound-driver model runs; **no audible output has been verified** |
 | Real hardware | **Never run on a real 3DS.** Emulator speed is probably pessimistic for float code, so hardware may differ |
+| Old 3DS / Old 3DS XL / original 2DS | Smaller resource profile and modifier controls implemented; host tests and native ARM compilation only, full game build/run pending |
 
 Details, measurements and the open work list: [docs/3DS_STATUS.md](docs/3DS_STATUS.md).
 
@@ -83,6 +85,8 @@ Almost all of the 3DS port code, build tooling and documentation was written by 
 runs the emulator/hardware tests and reviews results. It is not fully human-reviewed. Treat unverified claims in the docs accordingly, and please
 report anything that is wrong. Contributions are welcome (see [docs/3DS_STATUS.md](docs/3DS_STATUS.md) for open
 work); please say in your pull request if AI tools were involved.
+
+Codex and Claude Code share [AGENTS.md](AGENTS.md). Start there and read [docs/HANDOFF.md](docs/HANDOFF.md) before continuing work.
 
 ## License
 

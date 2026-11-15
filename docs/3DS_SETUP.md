@@ -53,11 +53,13 @@ about 2.9 GB). Output is large (about 4 GB) and game-derived: keep it private.
 ```bash
 python 3ds-port/ps2rc3ds.py build                    # release build -> 3ds-work/dist/ps2rc-3ds-release.3dsx
 python 3ds-port/ps2rc3ds.py build --mode profile     # timing/diagnostic build (scripted pad route, profiler, captures)
+python 3ds-port/ps2rc3ds.py build --model old3ds     # experimental Old 3DS / original 2DS resource profile
 ```
 
 The first build compiles about 11,000 translated functions (several minutes at `--jobs 8`); later builds reuse
 objects. Options: `--vert-budget N` (cap static vertices converted per frame, 0 = off), `--max-seconds N`
 (real-time cap of a session; the release build has none).
+See [3DS_OLD_MODEL.md](3DS_OLD_MODEL.md) for its limits, controls and outstanding validation.
 
 ## 5. Run it
 
@@ -69,11 +71,14 @@ Uses a *portable* profile (a `user/` folder next to the executable, New 3DS mode
 with hard links where possible, and starts minimized. Use a copy of Azahar that is not your everyday install.
 The log is `<azahar>/user/sdmc/3ds/ps2rc-sa/session.log`; profile builds also write `gpu-frame-*.ppm` captures there.
 Copy the log right after each run: the next run overwrites it, and old files from other builds mislead.
+For Old-model tests pass `--model old3ds`; the existing portable config's model setting is updated.
+Stop the emulator before switching settings and use a dedicated copy.
 
 **Real 3DS:** see [3DS_HARDWARE_TEST.md](3DS_HARDWARE_TEST.md). `stage-sd SD_ROOT` copies everything to
-`SD:/3ds/ps2rc-sa/` (dry run unless you add `--yes`; it checks FAT32's 4 GB file limit; files whose size or
-modification time differ are replaced, but files that no longer exist after a reconversion are NOT deleted, so
+`SD:/3ds/ps2rc-sa/` (dry run unless you add `--yes`; it checks FAT32's 4 GB file limit; content is compared using
+SHA-256 before skipping an existing file, but files that no longer exist after a reconversion are NOT deleted, so
 remove `SD:/3ds/ps2rc-sa/` first when you reconvert).
+Pass `--model old3ds` when staging that model; automatic selection never takes the other model's artifact.
 
 ## 6. Tests (no game data needed)
 
@@ -82,6 +87,8 @@ python 3ds-port/ps2rc3ds.py test
 ```
 Runs the 3DS host unit tests, a randomised equivalence test of the vertex converter, the game-data guard and PS2RC's
 quick pytest set. Run it before every commit.
+With devkitPro installed, `bash 3ds-port/scripts/native-checks.sh` also compiles the native ARM11 sources for both
+models without accessing disc data or translation outputs. This does not link or run the full game.
 
 ## Troubleshooting
 
@@ -89,4 +96,4 @@ quick pytest set. Run it before every commit.
 * *`python3: command not found` inside the build*: set `--python-bin` to the folder holding your Python.
 * *devkitPro not found*: set `DEVKITPRO` (Windows default `C:\devkitPro`, Linux `/opt/devkitpro`).
 * *Azahar prints an NDSP error and plays no sound*: known; audio output is unverified.
-* *Out of memory on the 3DS*: the game is tight on RAM (linear free dips under 1 MB). Report it with the log.
+* *Out of memory on the 3DS*: the game is tight on RAM (linear free dips under 1 MB). Report the reviewed allowlisted summary, never the raw log.

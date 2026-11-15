@@ -26,6 +26,8 @@ local.toml
 *.wav
 *.bmp
 __pycache__/
+.venv/
+.worktrees/
 *.pyc
 .pytest_cache/
 
