@@ -22,6 +22,8 @@ Docker mode on this PC (Docker Desktop was not running), `doctor --fix` on a mac
 
 ## Performance (the blocker)
 
+![Main loop time per iteration in Azahar](img/performance.svg)
+
 | Step | Between presents | Main loop / iteration |
 |---|---|---|
 | Baseline | ~336 ms (~3 fps) | 330-650 ms |

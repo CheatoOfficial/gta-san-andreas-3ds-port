@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 360" role="img" aria-label="Main loop time per iteration in the Azahar emulator: 422 ms baseline, 347 ms after converter optimisation, 232 ms with the vertex budget; target is 40 ms">
+  <title>Main loop time per iteration (Azahar, lower is better)</title>
+  <rect width="720" height="360" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <style>
+    text{font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:13px;fill:#1f2328}
+    .t{font-weight:600;font-size:15px}.s{font-size:12px;fill:#57606a}.v{font-weight:600}
+  </style>
+  <text x="24" y="30" class="t">Main loop time per iteration, Azahar (New 3DS mode), scripted route</text>
+  <text x="24" y="50" class="s">Lower is better. The game aims for 40 ms per iteration (25 fps). Emulator only: never measured on real hardware.</text>
+  <line x1="150" y1="80" x2="150" y2="300" stroke="#8c959f"/>
+  <!-- scale: 1 ms = 1.2 px, bars start at x=150 -->
+  <rect x="150" y="82" width="506" height="40" fill="#cf222e" opacity="0.85"/><text x="24" y="108">Baseline</text><text x="662" y="108" class="v" text-anchor="start" dx="-42" fill="#fff" style="fill:#fff">422 ms</text>
+  <rect x="150" y="142" width="416" height="40" fill="#bf8700" opacity="0.9"/><text x="24" y="168">Converter optimised</text><text x="572" y="168" class="v">347 ms</text>
+  <rect x="150" y="202" width="278" height="40" fill="#1a7f37" opacity="0.9"/><text x="24" y="228">+ vertex budget 20k</text><text x="434" y="228" class="v">232 ms</text>
+  <line x1="198" y1="72" x2="198" y2="310" stroke="#0969da" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="206" y="290" style="fill:#0969da" class="v">Target 40 ms (25 fps)</text>
+  <text x="24" y="334" class="s">Means over the sampled windows; ms per game iteration, so frames/s differs (about 3 fps baseline, about 4 fps with the budget).</text>
+</svg>

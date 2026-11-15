@@ -28,6 +28,11 @@ Take-Two Interactive, Sony Interactive Entertainment or Nintendo. "Grand Theft A
 
 Details, measurements and the open work list: [docs/3DS_STATUS.md](docs/3DS_STATUS.md).
 
+![Pipeline: your disc to a 3DSX, all on your machine](docs/img/pipeline.svg)
+
+*Screenshots:* this repository intentionally contains no game screenshots or captures, because anything rendered
+from the game is game-derived material the PS2RC license does not let us distribute. Diagrams and measurements only.
+
 ## What you need (and what you must not do)
 
 * **Your own legally obtained copy of the disc: PAL "SLES-52541", version 2.01** (check with `verify-disc` below).

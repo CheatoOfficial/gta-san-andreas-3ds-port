@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 330" role="img" aria-label="Build pipeline: your own disc image to a 3DSX, all on your machine">
+  <title>Build pipeline</title>
+  <rect width="900" height="330" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <style>
+    text{font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:14px;fill:#1f2328}
+    .t{font-weight:600;font-size:15px}.s{font-size:12px;fill:#57606a}
+    .b{fill:#f6f8fa;stroke:#8c959f;stroke-width:1.2}.g{fill:#ddf4ff;stroke:#0969da;stroke-width:1.2}
+    .p{fill:#fff8c5;stroke:#9a6700;stroke-width:1.2}.a{stroke:#57606a;stroke-width:1.6;fill:none;marker-end:url(#h)}
+  </style>
+  <defs><marker id="h" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#57606a"/></marker></defs>
+  <text x="24" y="30" class="t">You supply the disc. Everything below runs on your PC and stays under 3ds-work/ (git-ignored).</text>
+  <rect x="24" y="60" width="150" height="80" rx="8" class="p"/><text x="38" y="88" class="t">Your disc image</text><text x="38" y="108" class="s">PAL SLES-52541 v2.01</text><text x="38" y="125" class="s">verify-disc checks it</text>
+  <rect x="214" y="60" width="190" height="80" rx="8" class="b"/><text x="228" y="88" class="t">convert (PS2RC)</text><text x="228" y="108" class="s">analysis, translation to C,</text><text x="228" y="125" class="s">generated modules, staged data</text>
+  <rect x="444" y="60" width="190" height="80" rx="8" class="b"/><text x="458" y="88" class="t">build (devkitPro)</text><text x="458" y="108" class="s">translated C + 3DS runtime</text><text x="458" y="125" class="s">Citro3D renderer, NDSP audio</text>
+  <rect x="674" y="60" width="200" height="80" rx="8" class="g"/><text x="688" y="88" class="t">ps2rc-3ds-*.3dsx</text><text x="688" y="108" class="s">release or profile build</text><text x="688" y="125" class="s">+ staged data folder</text>
+  <path d="M174,100 H212" class="a"/><path d="M404,100 H442" class="a"/><path d="M634,100 H672" class="a"/>
+  <text x="24" y="190" class="t">Run it</text>
+  <rect x="24" y="205" width="250" height="90" rx="8" class="b"/><text x="38" y="232" class="t">azahar (emulator)</text><text x="38" y="252" class="s">private portable profile, New 3DS</text><text x="38" y="269" class="s">mode, minimized; log + captures</text>
+  <rect x="314" y="205" width="250" height="90" rx="8" class="b"/><text x="328" y="232" class="t">stage-sd (real 3DS)</text><text x="328" y="252" class="s">copies to SD:/3ds/ps2rc-sa/ (dry run</text><text x="328" y="269" class="s">unless --yes); launch from Homebrew</text>
+  <rect x="604" y="205" width="270" height="90" rx="8" class="b"/><text x="618" y="232" class="t">test (no game data needed)</text><text x="618" y="252" class="s">host unit tests, converter equivalence,</text><text x="618" y="269" class="s">game-data/PII guard, PS2RC pytest set</text>
+  <path d="M774,140 V170 H149 V203" class="a"/><path d="M774,170 H439 V203" class="a"/>
+</svg>
