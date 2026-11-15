@@ -25,7 +25,7 @@ PII = [re.compile(p, re.I) for p in (
     r"/Users/[A-Za-z][^/\s\"']+/")]
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 BLOB = re.compile(r"[A-Za-z0-9+/=]{200,}|(?:0x[0-9a-fA-F]{2},\s*){64,}")
-ALLOW_PII_FILES = {"3ds-port/scripts/check-no-game-data.py"}
+ALLOW_PII_FILES = {"3ds-port/scripts/check-no-game-data.py", "README.PS2RC.md"}  # the latter is upstream PS2RC's own README (its public contact)
 
 
 def files():
