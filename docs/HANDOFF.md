@@ -171,3 +171,31 @@ Staging selects the newest auto artifact, including profile builds; use an expli
 Use separate portable emulator copies/profiles. Record executable path, PID, start time and artifact hash; verify identity
 before stopping only that owned PID. Never stop all Azahar processes or change the everyday profile. Do not restage a
 running process's data. Archive old captures and check timestamps. No real SD staging was performed in this pass.
+
+
+## Codex: landed-main normal-control hardware build (2026-11-16)
+
+Separate worktree/branch codex/hardware-main is based on landed main 39a9571, excluding the parked
+long-strip candidate. A fresh private auto/release build linked in 448 s (two jobs), with GPU clipping
+at its default off, scripted pad/captures disabled, and no short runtime cap. No scripted pad object
+was present. Artifact size 11,663,216 bytes, SHA-256
+a34e6d9e7652d49a870d72c93766bb7b4b9071967cef3ad5e55a6a30cfc4f888.
+
+The exact release artifact booted in isolated New-mode Azahar without supplied input: 25 periodic
+frame samples through 1560, five with nonzero submitted geometry, zero sampled texture omissions/
+adapter errors, no fatal/abort/crash/panic lines and zero scripted-pad lines. This is log-based boot/
+submission evidence, not visual capture or physical-controller validation; release captures are off.
+NDSP again returned 0xd880a7fa and audio state ran silently. The owned emulator was stopped after
+verifying recorded PID, path and start time. Raw evidence and manifests stay private.
+
+The private package preflight found all required runtime items, 287 files totalling 3,823,573,102 bytes,
+largest file 478,615,552 bytes, no FAT32-size violation, and supported boot ELF hash match. A private
+PowerShell staging helper was parsed and dry-run against a private PC folder: exit 0, destination not
+created. It defaults to dry-run, accepts an explicit SD root, and only copies with its explicit Copy switch.
+No physical card or existing installation was accessed. Console availability/SD path was requested;
+staging and hardware execution still await the user's identified target and physical action.
+
+The private release package has READ-ME-FIRST.txt covering Homebrew Launcher startup, physical controls,
+log collection and limits. START is game pause during normal operation, not an unconditional quit key.
+Saving is unimplemented. Need real New 3DS LL memory/performance, controls, sound and sustained gameplay
+before any playable/validated claim. Further renderer work can proceed independently from this hardware gate.
