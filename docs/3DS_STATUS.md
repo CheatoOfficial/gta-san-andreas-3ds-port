@@ -138,6 +138,11 @@ comparable performance benchmarks or normal-controller tests.
 | Minimum sampled free linear memory (KiB) | 219 | 7,342 |
 | Fatal/abort/crash/panic entries in guest log | 0 | 0 |
 
+The normal release artifact (SHA-256
+`b3d0b52a121034e2897b29371b7ddd4ba2a47bcac6aa02c5408936e0733da3da`) also booted and rendered in both modes for
+about 115 seconds: Old had 24 periodic records through frame 1,440, New 23 through frame 1,320. Neither guest log
+had fatal/abort/crash/panic entries. No physical controls or normal-input gameplay was exercised.
+
 Fresh captures through frame 1,720 were inspected privately in both modes: the player, city, minimap and HUD render.
 Old geometry omission and detail loss remain visible. Its smaller static draw budget is preserved; zero texture omissions
 does not mean full scene coverage. Old-mode Azahar provides a generous normal heap; the allocator fixture and emulator

@@ -38,6 +38,7 @@ Saving is disabled by the memory-card configuration and filesystem stubs; this p
   Universal release BSS is 2,061,688 bytes; moving arrays out of BSS does not remove their runtime memory cost.
 - Final same-binary emulator results are in the newest section of `docs/3DS_STATUS.md`. They are scripted diagnostic runs,
   not normal-controller play or a performance comparison. Both emulator modes were run concurrently on the host.
+- The final normal release artifact also booted/rendered in both modes for about 115 seconds; no input was exercised.
 - Raw logs and captures remain private. Only reviewed numeric summaries may be shared. Hardware is still untested.
 
 ## Next work for Claude
