@@ -8,6 +8,7 @@
 #include "hle.h"
 #include "hle_3ds_gfx.h"
 #include "hle_3ds_homogeneous.h"
+#include "hle_3ds_world_clip.h"
 #include "hle_3ds_fog.h"
 #include "hle_3ds_texture.h"
 #include "hle_render.h"
@@ -356,47 +357,6 @@ static float colour_255(float value)
     return fminf(1.0f, fmaxf(0.0f, value * (1.0f / 255.0f)));
 }
 
-/* The host renderer clips against the PS2 GE near plane before dividing by W.
-   This 3DS path converts to screen coordinates on the CPU, so PICA cannot do
-   that clip afterward. Preserve homogeneous attributes until this step ends. */
-static float near_plane_distance(const W3dC3dVertex *vertex)
-{
-    return vertex->clip[2] + vertex->clip[3];
-}
-
-static void interpolate_clip_vertex(const W3dC3dVertex *a, const W3dC3dVertex *b,
-                                   float t, W3dC3dVertex *out)
-{
-    for (int i = 0; i < 4; ++i) out->clip[i] = a->clip[i] + (b->clip[i] - a->clip[i]) * t;
-    for (int i = 0; i < 4; ++i) out->color[i] = a->color[i] + (b->color[i] - a->color[i]) * t;
-    for (int i = 0; i < 2; ++i) out->uv[i] = a->uv[i] + (b->uv[i] - a->uv[i]) * t;
-    out->view_z = a->view_z + (b->view_z - a->view_z) * t;
-    out->clip[2] = -out->clip[3];
-}
-
-static unsigned clip_triangle_near(const W3dC3dVertex input[3], W3dC3dVertex output[4], int *crossed)
-{
-    unsigned count = 0;
-    int inside_count = 0;
-    for (int i = 0; i < 3; ++i)
-        inside_count += near_plane_distance(&input[i]) >= 0.0f;
-    *crossed = inside_count != 0 && inside_count != 3;
-    if (!inside_count) return 0;
-
-    for (int i = 0; i < 3; ++i) {
-        const W3dC3dVertex *a = &input[i];
-        const W3dC3dVertex *b = &input[(i + 1) % 3];
-        const float da = near_plane_distance(a), db = near_plane_distance(b);
-        const int a_inside = da >= 0.0f, b_inside = db >= 0.0f;
-        if (a_inside) output[count++] = *a;
-        if (a_inside != b_inside) {
-            const float t = da / (da - db);
-            interpolate_clip_vertex(a, b, t, &output[count++]);
-        }
-    }
-    return count;
-}
-
 /* Exact equivalent of isfinite() on every attribute and near distance of a triangle: x - x is 0 for finite x
    and NaN for an infinity or NaN, and NaN survives the sum. Needs IEEE semantics (the 3DS build uses
    -fno-fast-math), and is much cheaper than 36 classification calls per triangle. */
@@ -512,23 +472,24 @@ void hle_3ds_gfx_present(void)
         const Hle3dsTexture *batch_texture = batch->raster ? hle_3ds_texture_get(batch->raster) : NULL;
         const float scale_u = batch_texture ? batch_texture->uv_scale_u : 1.0f;
         const float scale_v = batch_texture ? batch_texture->uv_scale_v : 1.0f;
+        for (unsigned i = batch->first_vertex; i + 2u < source_end; i += 3u) {
+            const W3dC3dVertex *in = &source[i];
+            if (!triangle_finite(in)) { ++dropped_w; continue; }
 #if HLE_3DS_GPU_CLIP
-        /* PICA clips against the GE near plane (see hle_3ds_gpu_clip_rows); only reject non-finite input. */
-        for (unsigned i = batch->first_vertex; i + 2u < source_end; i += 3u) {
-            const W3dC3dVertex *in = &source[i];
-            if (!triangle_finite(in)) { ++dropped_w; continue; }
-            if (output_count + 3 > W3D_C3D_FRAME_VERTEX_CAPACITY) { ++capacity_dropped_triangles; continue; }
-            for (int j = 0; j < 3; ++j)
-                write_world_vertex(&vertex_buffer[output_count++], in[j].clip, &in[j], batch, scale_u, scale_v);
-            ++drawn_triangles;
-        }
+            /* Fog is a projective texture coordinate built from fog(view_z)*W in the shader.
+               GPU-generated near intersections cannot recompute it. Preserve CPU fog there. */
+            if (!gpu_fog_needs_cpu_clip(batch->state.fog, near_plane_distance(&in[0]),
+                                       near_plane_distance(&in[1]), near_plane_distance(&in[2]))) {
+                if (output_count + 3 > W3D_C3D_FRAME_VERTEX_CAPACITY) { ++capacity_dropped_triangles; continue; }
+                for (int j = 0; j < 3; ++j)
+                    write_world_vertex(&vertex_buffer[output_count++], in[j].clip, &in[j], batch, scale_u, scale_v);
+                ++drawn_triangles;
+                continue;
+            }
 #else
-        for (unsigned i = batch->first_vertex; i + 2u < source_end; i += 3u) {
-            const W3dC3dVertex *in = &source[i];
-            if (!triangle_finite(in)) { ++dropped_w; continue; }
             if (near_plane_distance(&in[0]) >= 0.0f && near_plane_distance(&in[1]) >= 0.0f &&
                 near_plane_distance(&in[2]) >= 0.0f) {
-                /* Common case: wholly in front of the near plane, so clipping would return the input unchanged. */
+                /* Common case: wholly in front of the near plane. */
                 if (output_count + 3 > W3D_C3D_FRAME_VERTEX_CAPACITY) { ++capacity_dropped_triangles; continue; }
                 float positions[3][4];
                 if (!hle_3ds_homogeneous_position(in[0].clip, positions[0]) ||
@@ -539,6 +500,7 @@ void hle_3ds_gfx_present(void)
                 ++drawn_triangles;
                 continue;
             }
+#endif
             W3dC3dVertex triangle[3] = {in[0], in[1], in[2]};
             W3dC3dVertex clipped[4];
             int crossed = 0;
@@ -562,13 +524,18 @@ void hle_3ds_gfx_present(void)
                     ++dropped_w;
                     continue;
                 }
-                for (int j = 0; j < 3; ++j)
-                    write_world_vertex(&vertex_buffer[output_count++], positions[j], fan_vertices[j], batch,
+                for (int j = 0; j < 3; ++j) {
+#if HLE_3DS_GPU_CLIP
+                    const float *position = fan_vertices[j]->clip;
+#else
+                    const float *position = positions[j];
+#endif
+                    write_world_vertex(&vertex_buffer[output_count++], position, fan_vertices[j], batch,
                                        scale_u, scale_v);
+                }
                 ++drawn_triangles;
             }
         }
-#endif
         batch_ranges[b].first = output_first;
         batch_ranges[b].count = (unsigned)output_count - output_first;
     }
