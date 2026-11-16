@@ -108,6 +108,11 @@
  mul r4.xyz, limits.w, r4
  mov r4.w, options.y
  mul r4, postmul, r4
+ ; apply_simple_light rounds c * m / 255 to the nearest byte (mul255); do the same before adding the emissive term
+ mul r4, limits.z, r4
+ add r4, k.z, r4
+ flr r4, r4
+ mul r4, limits.w, r4
  add r4.xyz, postadd, r4
  min r4, limits.y, r4
 .end
