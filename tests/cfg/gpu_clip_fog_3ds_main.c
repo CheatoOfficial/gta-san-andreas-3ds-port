@@ -32,7 +32,12 @@ int main(void)
         v[i].view_z = v[i].clip[3] = z[i];
         v[i].clip[2] = (100.1f / 99.9f) * z[i] - (20.0f / 99.9f);
         v[i].uv[0] = (float)i; v[i].color[0] = (float)i * 0.25f;
+        v[i].color[3] = 1;
     }
+    /* Non-degenerate visible geometry, wholly inside the side planes. */
+    v[0].clip[0]=-0.01f;
+    v[1].clip[0]=v[2].clip[0]=50;
+    v[1].clip[1]=-50; v[2].clip[1]=50;
     const float da=near_plane_distance(&v[0]), db=near_plane_distance(&v[1]);
     assert(gpu_fog_needs_cpu_clip(1,da,db,near_plane_distance(&v[2])));
     const float t = da / (da-db);

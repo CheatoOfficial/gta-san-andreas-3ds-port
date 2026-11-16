@@ -45,8 +45,9 @@ Saving is disabled by the memory-card configuration and filesystem stubs; this p
 
 ## Next work for Claude
 
-1. Review PR #4, then PR #5 and the Codex continuation below. Merge PR #4 before retargeting PR #5 to main.
-   Check current CI and retain the exact-rounding lighting oracle and forced model targets.
+1. Review PR #7 and incorporate the fog correction into PR #6 before considering default enablement.
+   Land #4 then #5, retarget/review #6 with the correction, and keep GPU clipping off pending its remaining checks.
+   Check current CI and retain the lighting/fog regressions and forced model targets.
 2. Test real Old/New memory and normal release controls. Old-mode Azahar grants roughly 75 MiB normal heap here; a real
    Old launch may grant much less. The synthetic 64 MiB total-budget allocator test is not a hardware-fit test. Compact
    capture runs can have only a few hundred KiB linear headroom; test sustained texture streaming and allocation failures.
@@ -117,6 +118,39 @@ Next steps, in order of measured cost on the busy window (~337 ms/frame with the
 2. Present pass (~67 ms): make it zero-copy. The adapter could write `Hle3dsVertex` straight into a double-buffered
    linear buffer, with fog and UV scale as per-batch shader uniforms. Linear memory is tight on Old (8 MiB).
 3. Game-side time between presents not explained by conversion (~120 ms).
+
+## Codex: fogged near crossings (PR #7, stacked on #6)
+
+Found a confirmed source/math mismatch: PR #6 computes fog before clipping, but the reference computes it at generated
+vertices. Because the shader builds projective coordinates from visibility(view_z)*W, interpolation can give roughly
+half visibility at a near-plane edge where the reference gives full visibility. The new synthetic regression uses
+positive W and non-degenerate side-plane-inside geometry; no game input is required to reproduce the calculation.
+See `docs/3DS_STATUS.md` for the formula, limits and emulator observations.
+
+Fogged crossing triangles now share the reference CPU clipper, recompute fog and pass raw clip coordinates through
+the GPU projection. Non-crossing and unfogged triangles stay on the GPU path. No default switch, depth mapping, shader,
+texture policy or buffer budget changed. The prototype's far-plane/clamp difference remains open. Its clipping counters
+now describe CPU fallback work; GPU submissions are not a count of final post-hardware-clipping triangles.
+
+Verification: fourteen host executables, eleven selected Python tests, 6,000 adapter cases; native ARM compilation
+with off/on GPU paths for all targets; full on/off profile and default release links. The same on binary ran in both
+isolated emulator modes concurrently, with zero sampled texture omissions/adapter errors, no fatal/crash entries,
+and 11 CPU fallback crossings at frame 1,920 in each mode. Fresh captures target 1,900..1,930 using an ignored build
+script copy; public capture defaults are unchanged. No hardware, release controls, audio or saving was tested.
+The old performance table predates this fix. Run a separate matched benchmark before asserting its exact speedup.
+
+A fresh New-mode CPU-reference run also completed the four near captures. They match the previous CPU reference
+byte-for-byte. Fixed prototype vs fresh reference: 3/0/8/1 changed pixels at 1,900/1,910/1,920/1,930; maximum channel
+delta one. The near-camera wall at 1,920 was inspected privately. The reference log has zero sampled texture
+omissions/adapter errors and no fatal/crash entries. These are limited scene checks; the extreme fog-gradient issue
+is established by the synthetic shader-coordinate case. All owned emulator processes were stopped after verifying
+recorded PID/path/start time. No normal emulator profile or physical SD was changed.
+
+Claude: review the crossing predicate, the unchanged reference clipping/interpolation, fan capacity checks, and raw
+coordinates after CPU fog generation. Keep the prototype off by default. Repeat a game-free synthetic GPU fog probe
+on real hardware if possible, then boundary/depth/far-geometry tests before enabling it. GPU lighting/caching and
+zero-copy work are still next performance candidates; this pass focused on correctness of the proposed clipping path.
+All private processes must be stopped by verified recorded identity, not by executable name.
 
 ## Reproduction and ownership
 
