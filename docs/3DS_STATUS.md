@@ -353,6 +353,33 @@ Old mode, same route: static vertices drawn per frame 9.4-9.9k of 10k (draw-orde
 side privately: complete walls, fences, palms, poles and skyline where the previous build had holes and floating
 pieces, with light distance haze. Azahar only.
 
+## Dual-screen HUD (2026-11-17, `hud_layout = bottom`, 3DS default)
+
+Reference: a public phone video of another New 3DS build of the game (watched 2026-11-16; no assets used). Its
+bottom screen shows a large square radar on the left and a column with weapon icon, ammo, clock, money, health and
+armour; the top screen keeps the picture, help box and zone name; cutscenes leave the bottom screen blank.
+
+How: the HUD draw (0x2B01A0) already routes each element group through `src/hle_hud.c` handlers (sites.def). On the
+3DS the status/wanted group (0x2AB500 / 0x2AA4D0) and the radar (0x2AC960) get `hle_hud_screen = 1` and a transform
+into the bottom screen; the 2D back-end tags those primitives and draws them on a second Citro3D target (240x320,
+cleared black every frame). Help box, subtitles, script text, zone/vehicle names, menus and loading screens are
+outside those groups and stay on the top screen. Twenty element calls inside the status draw and twelve inside the
+radar draw are routed too (`hud_sub_N`): each status element (weapon icon, clock, money, health/armour/breath bars,
+ammo) gets its own place in the column, and the four quarter sprites of the black radar ring are left out so the
+radar is square; radar primitives are scissored to the 240x240 px panel. Element positions on the PS2 screen were
+measured from per-group/per-element bounds the build logs every 120 frames (`hud bounds`).
+
+The bottom screen is taken from the text console at the game's first frame (boot messages stay readable until then)
+and given back on exit. `hud_layout = classic` (player setting, re-read every frame) keeps the original single-screen
+HUD. Also fixed: `HLE_3DS_RGBA8` packed red into the low byte, so render-target clears were red (now 0xRRGGBBAA).
+
+Checked in the private emulator (New mode, both screens captured): gameplay frames 1,360-1,720 (radar, fist icon,
+clock, money, health; live clock and money updates), intro cutscene at frame 1,050 (bottom blank), gameplay fade-in at
+1,200, the pause menu opened by the scripted pad at 121 s (top: the complete Map page; bottom blank) and resumed at
+127 s (HUD back, zone name on top), and `hud_layout = classic` (original HUD on top, bottom untouched). Not yet seen:
+ammo, armour, breath and wanted-level placement (the route never shows them; their placements are estimates until
+their logged bounds are observed), Old mode, hardware. Azahar only.
+
 ## Known issues from the pre-publication review (2026-11-15)
 
 * Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a

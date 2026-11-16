@@ -102,6 +102,7 @@ static const HleCfgAlias aliases[] = {
     {"hud_scale",      "hud_scale",     50,  200, 100, 0, NULL},             /* % size of the corner HUD */
     {"hud_outline",    "hud_outline",    0,    1,   0, 0, "off=0,on=1"},     /* black outline of the HUD text */
     {"hud_radar",      "hud_radar",      0,    0,   0, 0, "!round=0,ps2=1"}, /* radar shape */
+    {"hud_layout",     "hud_layout",     0,    0,   0, 0, "!bottom=1,classic=0"},   /* 3DS: radar + status below */
 };
 
 const HleCfgAlias *hle_cfg_alias_table(int *n)

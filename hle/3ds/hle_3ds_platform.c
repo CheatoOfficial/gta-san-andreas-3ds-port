@@ -14,6 +14,9 @@
 #include "hle_3ds_padmap.h"
 #include "hle_3ds_profile.h"
 
+int hle_3ds_gfx_bottom_owned(void);      /* hle_3ds_gfx.c: the dual-screen HUD owns the bottom screen */
+void hle_3ds_gfx_release_bottom(void);
+
 #define HLE_3DS_ROOT "sdmc:/3ds/ps2rc-sa/"
 #define HLE_3DS_MAX_VFILES 512
 #define HLE_3DS_MAX_OPEN 8
@@ -155,7 +158,7 @@ void hle_plat_milestone(const char *line)
     hle_plat_log_write(line, strlen(line));
     hle_plat_log_write("\n", 1);
     hle_plat_log_flush();
-    printf("%s\n", line);
+    if (!hle_3ds_gfx_bottom_owned()) printf("%s\n", line);   /* the log keeps it while the HUD owns the screen */
 }
 
 void hle_plat_result_line(const char *line) { hle_plat_milestone(line); }
@@ -252,6 +255,7 @@ void hle_plat_disc_unlock(void) { if (disc_lock_ready) LightLock_Unlock(&disc_lo
 void hle_plat_exit(int code)
 {
     hle_plat_log_flush();
+    hle_3ds_gfx_release_bottom();
     printf("\nPS2RC runtime exited with code %d. Press START to close.\n", code);
     for (;;) {
         if (!aptMainLoop()) break;

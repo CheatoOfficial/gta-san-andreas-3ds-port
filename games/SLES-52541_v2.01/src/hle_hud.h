@@ -15,12 +15,24 @@
 #define HLE_HUD_H
 
 extern int hle_hud_on;                    /* a transform is active (inside a HUD group) */
+/* 3DS dual-screen layout (hud_layout = bottom | classic, 3DS default bottom): the HUD draw's status, wanted-level and
+   radar groups are drawn on the bottom screen. While such a group draws, hle_hud_screen is 1 and the transform maps
+   guest units into the bottom screen's own 640x448 guest space (320x240 pixels); the 2D back-end routes those
+   primitives there. hle_hud_group is the element group being drawn (HLE_HUD_GROUP_*, -1 outside the HUD draw). */
+extern int hle_hud_screen, hle_hud_group;
+enum { HLE_HUD_GROUP_STATUS, HLE_HUD_GROUP_NAMES, HLE_HUD_GROUP_RADAR, HLE_HUD_GROUP_STATS_PANEL, HLE_HUD_GROUP_HELP,
+       HLE_HUD_GROUP_CENTRE, HLE_HUD_GROUP_COUNT };
+int hle_hud_bottom_layout(void);          /* 1 when the dual-screen layout is selected (3DS) */
 extern int hle_hud_outline;               /* the active group's text gets a black outline */
 extern float hle_hud_ax, hle_hud_kx, hle_hud_ay, hle_hud_ky;
+extern float hle_hud_sx, hle_hud_sy;      /* source anchor: equal to (ax, ay) except for the 3DS bottom layout */
 
-static inline float hle_hud_x(float x) { return hle_hud_on ? hle_hud_ax + (x - hle_hud_ax) * hle_hud_kx : x; }
-static inline float hle_hud_y(float y) { return hle_hud_on ? hle_hud_ay + (y - hle_hud_ay) * hle_hud_ky : y; }
+static inline float hle_hud_x(float x) { return hle_hud_on ? hle_hud_ax + (x - hle_hud_sx) * hle_hud_kx : x; }
+static inline float hle_hud_y(float y) { return hle_hud_on ? hle_hud_ay + (y - hle_hud_sy) * hle_hud_ky : y; }
 
 void hle_hud_report(void);
+/* 3DS: one frame's guest-unit bounds of each group's 2D primitives, before the bottom transform (diagnostics). */
+void hle_hud_note_bounds(float x0, float y0, float x1, float y1);
+void hle_hud_log_bounds(unsigned frame);  /* logs and resets the bounds of the groups seen since the last call */
 
 #endif

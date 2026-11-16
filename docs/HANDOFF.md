@@ -263,3 +263,15 @@ Other gtasands ideas not done yet:
 - Bottom screen HUD: route the 2D overlay layer (radar, money, clock, wanted level) to the bottom screen, which now
   shows only the debug console. Menus/subtitles share that layer: needs a screen-region split or a toggle.
 - Hide tiny props by projected size (their wires/clutter filter), and GPU colour multiply for prelit geometry.
+
+## Claude: dual-screen HUD (2026-11-17, branch claude/bottom-hud, stacked on #9)
+
+Required by the user: bottom-screen HUD like the reference video, reversible. Implemented through the existing HUD
+call sites (semantic, not screen-position guesses); details and evidence in `docs/3DS_STATUS.md`, "Dual-screen HUD".
+Files: `src/hle_hud.c/.h` (groups, element placement table, bounds log), `sites.def` (hud_sub_0..31),
+`engine/render/3ds/hle_3ds_gfx.c` (bottom target, batch screen tag, scissor, capture), `hle/3ds/hle_3ds_platform.c`
+(console hand-back), settings entries. Captures: `CAPTURE_START/CAPTURE_MAX/CAPTURE_INTERVAL` build variables write
+`gpu-frame-*` and `gpu-bottom-*` PPMs.
+
+Open: confirm ammo/armour/breath/wanted placement when those appear (read `hud bounds ... element N` lines and adjust
+`sub_place` / the G_TR box); a loading-screen map on the bottom screen (the video shows one); Old mode check.

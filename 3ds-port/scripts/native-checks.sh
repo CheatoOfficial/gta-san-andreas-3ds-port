@@ -16,10 +16,10 @@ FLAGS=(-O2 -std=gnu11 -Wall -Wno-unused-function -Wno-unused-variable -Wno-forma
        -fno-fast-math -frounding-math -ffp-contract=off -fno-strict-aliasing -DHLE_3DS
        -DHLE_3DS_CAPTURE_MAX=0 "-I$DEVKITPRO/libctru/include" "-I$OUT"
        "-I$REPO/hle/core" "-I$REPO/hle/3ds" "-I$REPO/runtime" "-I$REPO/audio"
-       "-I$R" "-I$R/3ds" "-I$R/psp" "-I$S" "-I$S/3ds")
+       "-I$R" "-I$R/3ds" "-I$R/psp" "-I$S" "-I$S/3ds" "-I$REPO/games/SLES-52541_v2.01/src")
 for MODEL in 0 1 2; do
   AUTO=0; OLD=$MODEL; if [ "$MODEL" = 2 ]; then AUTO=1; OLD=0; fi
-  for SRC in "$REPO"/hle/3ds/*.c "$R"/3ds/*.c "$S"/3ds/*.c; do
+  for SRC in "$REPO"/hle/3ds/*.c "$R"/3ds/*.c "$S"/3ds/*.c "$REPO/games/SLES-52541_v2.01/src/hle_hud.c"; do
     arm-none-eabi-gcc "${FLAGS[@]}" "-DHLE_3DS_OLD_MODEL=$OLD" "-DHLE_3DS_AUTO_MODEL=$AUTO" -c "$SRC" -o "$OUT/$(basename "$SRC").o"
   done
   arm-none-eabi-gcc "${FLAGS[@]}" "-DHLE_3DS_OLD_MODEL=$OLD" "-DHLE_3DS_AUTO_MODEL=$AUTO" -DHLE_3DS_GPU_CLIP=1 \

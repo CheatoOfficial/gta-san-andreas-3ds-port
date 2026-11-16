@@ -56,6 +56,7 @@ static const HleSetting reg[] = {
     {"hud_aspect", "Graphics", "HUD proportions", "fix = the HUD keeps its 4:3 proportions in the screen corners (round radar), stretch = stretched over the wide screen.", "fix", NULL, 0, 0, 0, NULL, NULL, NULL, 0},
     {"hud_scale", "Graphics", "HUD size", "Size of the corner HUD (money, clock, health, weapon, radar), in percent.", "125", NULL, 0, 0, 5, NULL, " %", NULL, 0},
     {"hud_outline", "Graphics", "HUD text outline", "A thin black outline around the HUD text.", "1", NULL, 0, 0, 0, NULL, NULL, NULL, 0},
+    {"hud_layout", "Graphics", "HUD layout (3DS)", "bottom = radar, weapon, clock, money, health and wanted level on the lower screen, the upper screen keeps the game picture; classic = the original HUD on the upper screen.", "bottom", NULL, 0, 0, 0, NULL, NULL, NULL, 0},
     {"hud_radar", "Graphics", "Radar shape", "With fixed HUD proportions: round = round on the PSP screen, ps2 = as the original.", "round", NULL, 0, 0, 0, NULL, NULL, NULL, 0},
     /* population / far world */
     {"peds", "World", "Pedestrians", "How many pedestrians, in percent of the original. Higher: a livelier city, but clearly slower.", "25", NULL, 0, 0, 5, NULL, " %", NULL, 0},
