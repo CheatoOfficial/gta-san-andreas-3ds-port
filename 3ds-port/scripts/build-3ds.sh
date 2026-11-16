@@ -104,7 +104,8 @@ fi
 # takes effect while the large translated-function object set stays cached.
 find "$BDIR/obj" -type f \( -name hle_3ds_main.o -o -name hle_3ds_profile.o -o -name hle_3ds_heaps.o -o -name hle_main.o -o -name hle_sce.o -o -name hle_prof.o \
   -o -name hle_3ds_gfx.o -o -name hle_3ds_texture.o -o -name hle_w3d.o -o -name w3d_citro3d_backend.o \
-  -o -name w3d_citro3d_adapter.o -o -name hle_3ds_platform.o -o -name hle_iop_servers.o -o -name audio_3ds.o -o -name hle_dev_pad_probe.o \) \
+  -o -name w3d_citro3d_adapter.o -o -name hle_3ds_platform.o -o -name hle_iop_servers.o -o -name audio_3ds.o -o -name hle_dev_pad_probe.o \
+  -o -name hle_bootpace.o -o -name hle_bl.o \) \
   -delete 2>/dev/null || true
 
 # The 3DS texture cache reuses PS2RC's PS2-texture converter, which lives in the pack's psp/ source folder

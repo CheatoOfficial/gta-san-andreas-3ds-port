@@ -158,6 +158,13 @@ static void init(void)
     o_vs = o_cap ? vsyncs_for(o_cap) : 0;
     o_log_s = hle_x_opt("clocklog", 0);
     hle_bl_mode = hle_x_opt("pace", -1);
+#if defined(HLE_3DS) && !defined(HLE_3DS_PROF)
+    /* 3DS release default: real time (2). The 3DS runs the game far below its 25 fps, so without it the game clock,
+       VBlanks and the audio model fell behind the real clock (silent gaps between sound-driver bursts); measured in
+       Azahar: virtual and game clock x1.0 of real time, audio produced at real-time rate. Profile builds keep the
+       deterministic default (0) so their frame timings stay comparable. */
+    if (hle_bl_mode < 0) hle_bl_mode = 2;
+#endif
     if (hle_bl_mode < 0) hle_bl_mode = o_cap ? 2 : 0;     /* fps_cap without x_pace: real-time pacing */
     if (hle_bl_mode > 2) hle_bl_mode = 0;
     if (o_lag_ms < 0) o_lag_ms = 0;
