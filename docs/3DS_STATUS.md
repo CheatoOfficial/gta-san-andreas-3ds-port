@@ -150,6 +150,29 @@ runs do not prove the complete runtime fits a real Old launch. Compact capture r
 No game captures, raw logs, generated sources or executables are included here. Real hardware, controls, audio, saving
 and sustained gameplay remain unfinished.
 
+## Present-pass fast path (2026-11-16)
+
+Each frame, `hle_3ds_gfx_present()` re-checks, near-clips, divides and copies every converted world triangle into the
+GPU vertex buffer on the CPU. On the profile route this cost a steady ~2.0 ms per 1,000 world vertices (the "submit"
+timer), as much as the whole vertex conversion. Triangles entirely in front of the near plane (almost all of them)
+now skip the copy-and-clip step; the finite check is one exact IEEE sum instead of 36 `isfinite()` calls; the
+texture UV scale is applied while writing instead of in a second pass over GPU memory. Behaviour is unchanged.
+
+Universal profile build, scripted route, private Azahar profile, New mode, before (`6fed0a1`) and after. The route is
+deterministic: matching windows had identical vertex counts.
+
+| Window (static + lit vertices) | Submit before | Submit after |
+|---|---:|---:|
+| 73,288 | 147.8 ms | 99.3 ms |
+| 109,796 | 217.5 ms | 146.0 ms |
+| 71,207 | 143.1 ms | 96.4 ms |
+| 65,201 | 131.9 ms | 88.6 ms |
+| 45,060 | 92.0 ms | 62.0 ms |
+
+That is about 33% less present-pass time (1.35 ms per 1,000 vertices). Old mode on the same binary measured the same
+per-vertex cost, 59 sampled frames, 0 texture omissions. Neither mode logged fatal entries. Frame time is still
+dominated by conversion plus this pass (roughly 150-450 ms per frame in busy scenes), so the game is still not playable.
+
 ## Known issues from the pre-publication review (2026-11-15)
 
 * Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a
