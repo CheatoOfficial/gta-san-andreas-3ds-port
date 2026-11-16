@@ -20,9 +20,9 @@
 #define HLE_3DS_CAPTURE_START_FRAME 0
 #endif
 
-static W3dC3dVertex frame_vertices[W3D_C3D_FRAME_VERTEX_CAPACITY];
-static W3dVC temporary_vertices[W3D_C3D_TEMP_VERTEX_CAPACITY];
-static W3dC3dBatch frame_batches[W3D_C3D_BATCH_CAPACITY];
+static W3dC3dVertex *frame_vertices;
+static W3dVC *temporary_vertices;
+static W3dC3dBatch *frame_batches;
 static uint8_t scratch[W3D_C3D_SCRATCH_BYTES] __attribute__((aligned(16)));
 static W3dCam current_camera, camera_base;
 static float current_world[12];
@@ -31,7 +31,7 @@ static W3dLights current_lights;
 static float current_bones[8][12];
 static unsigned frame_vertex_count, scratch_used;
 #ifndef W3D_C3D_STATIC_VERT_BUDGET
-#define W3D_C3D_STATIC_VERT_BUDGET 0u /* 0 = unlimited */
+#define W3D_C3D_STATIC_VERT_BUDGET (hle_3ds_active_profile->static_budget) /* 0 = unlimited */
 #endif
 static unsigned frame_static_verts, budget_skipped;
 static unsigned frame_batch_count;
@@ -82,8 +82,25 @@ static void record_batch(unsigned first_vertex, unsigned vertex_count)
     batch->fog_z = current_camera.fog_z;
 }
 
+int w3d_citro3d_init(void)
+{
+    if (frame_vertices) return 1;
+    frame_vertices=malloc(sizeof(*frame_vertices)*W3D_C3D_FRAME_VERTEX_CAPACITY);
+    temporary_vertices=malloc(sizeof(*temporary_vertices)*W3D_C3D_TEMP_VERTEX_CAPACITY);
+    frame_batches=malloc(sizeof(*frame_batches)*W3D_C3D_BATCH_CAPACITY);
+    if (frame_vertices && temporary_vertices && frame_batches) return 1;
+    w3d_citro3d_shutdown(); return 0;
+}
+void w3d_citro3d_shutdown(void)
+{
+    free(frame_vertices); frame_vertices=NULL;
+    free(temporary_vertices); temporary_vertices=NULL;
+    free(frame_batches); frame_batches=NULL;
+    frame_vertex_count=frame_batch_count=0;
+}
 void w3d_citro3d_frame_reset(void)
 {
+    if (!w3d_citro3d_init()) { frame_error=-1; return; }
     frame_vertex_count = 0;
     frame_static_verts = 0;
     frame_batch_count = 0;

@@ -13,7 +13,7 @@
 #include "hle_3ds_gfx.h"
 #include "hle_3ds_profile.h"
 
-#if HLE_3DS_OLD_MODEL
+#if HLE_3DS_OLD_MODEL && !HLE_3DS_AUTO_MODEL
 /* Leave the rest of the launcher's memory allowance to malloc (including 32 MiB guest RAM).
    libctru's automatic split can otherwise leave too little normal heap on Old 3DS. */
 u32 __ctru_linear_heap_size = HLE_3DS_LINEAR_HEAP_BYTES;
@@ -100,8 +100,9 @@ int main(void)
         gfxExit();
         return 1;
     }
+    hle_3ds_profile_select(is_new,envGetHeapSize(),envGetLinearHeapSize());
     printf("PS2RC 3DS runtime (%s profile)\n", HLE_3DS_PROFILE_NAME);
-    if (!is_new && !HLE_3DS_OLD_MODEL) {
+    if (!is_new && !HLE_3DS_OLD_MODEL && !HLE_3DS_AUTO_MODEL) {
         printf("This build needs New 3DS memory. Build with --model old3ds.\n");
         wait_start();
         gfxExit();
@@ -110,9 +111,9 @@ int main(void)
     /* Never request New 3DS speedup on an Old 3DS. */
     if (is_new) osSetSpeedupEnable(true);
     LOG("3DS resources: old_profile=%u new_hardware=%u heap_KiB=%lu linear_KiB=%lu\n",
-        (unsigned)HLE_3DS_OLD_MODEL, (unsigned)is_new,
+        (unsigned)HLE_3DS_COMPACT, (unsigned)is_new,
         (unsigned long)(envGetHeapSize() / 1024u), (unsigned long)(envGetLinearHeapSize() / 1024u));
-    if (envGetHeapSize() < HLE_RAM_SIZE + 4u * 1024u * 1024u) {
+    if (envGetHeapSize() < hle_3ds_active_profile->min_heap) {
         printf("FATAL: insufficient normal heap for guest RAM and runtime\n");
         printf("Try a homebrew launch with a larger application memory allowance.\n");
         hle_plat_log_flush();

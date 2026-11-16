@@ -12,6 +12,8 @@ typedef struct {
     float far_z, fog_z;
 } W3dC3dBatch;
 
+int w3d_citro3d_init(void);
+void w3d_citro3d_shutdown(void);
 void w3d_citro3d_frame_reset(void);
 const W3dC3dVertex *w3d_citro3d_frame_vertices(void);
 int w3d_citro3d_frame_vertex_count(void);

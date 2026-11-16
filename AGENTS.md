@@ -48,6 +48,7 @@ bash 3ds-port/scripts/native-checks.sh   # requires devkitPro; no game data
 For an explicitly authorized local game build:
 
 ```bash
+python 3ds-port/ps2rc3ds.py build --model auto    # universal default
 python 3ds-port/ps2rc3ds.py build --model new3ds
 python 3ds-port/ps2rc3ds.py build --model old3ds
 ```

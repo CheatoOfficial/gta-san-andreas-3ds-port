@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compile the native 3DS layer for BOTH models without a disc, translation or generated game sources.
+# Compile the native 3DS layer for universal and both forced targets without a disc, translation or generated game sources.
 # This checks SDK/API compatibility; it does not link or run the game.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -17,10 +17,11 @@ FLAGS=(-O2 -std=gnu11 -Wall -Wno-unused-function -Wno-unused-variable -Wno-forma
        -DHLE_3DS_CAPTURE_MAX=0 "-I$DEVKITPRO/libctru/include" "-I$OUT"
        "-I$REPO/hle/core" "-I$REPO/hle/3ds" "-I$REPO/runtime" "-I$REPO/audio"
        "-I$R" "-I$R/3ds" "-I$R/psp" "-I$S" "-I$S/3ds")
-for MODEL in 0 1; do
+for MODEL in 0 1 2; do
+  AUTO=0; OLD=$MODEL; if [ "$MODEL" = 2 ]; then AUTO=1; OLD=0; fi
   for SRC in "$REPO"/hle/3ds/*.c "$R"/3ds/*.c "$S"/3ds/*.c; do
-    arm-none-eabi-gcc "${FLAGS[@]}" "-DHLE_3DS_OLD_MODEL=$MODEL" -c "$SRC" -o "$OUT/$(basename "$SRC").o"
+    arm-none-eabi-gcc "${FLAGS[@]}" "-DHLE_3DS_OLD_MODEL=$OLD" "-DHLE_3DS_AUTO_MODEL=$AUTO" -c "$SRC" -o "$OUT/$(basename "$SRC").o"
   done
   arm-none-eabi-gcc -march=armv6k -mfloat-abi=hard -c "$REPO/hle/3ds/hle_ctx.S" -o "$OUT/hle_ctx.o"
-  echo "PASS native ARM11 compile: old_model=$MODEL (no game data)"
+  echo "PASS native ARM11 compile: old_model=$OLD auto_model=$AUTO (no game data)"
 done
