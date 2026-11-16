@@ -8,7 +8,7 @@ to `session.log`. It is a measurement build, not a playable one.
 2. Copy to the SD card (dry run first, then `--yes`):
    `python 3ds-port/ps2rc3ds.py stage-sd <SD root> --yes` (about 3.7 GB into `SD:/3ds/ps2rc-sa/`; the SD must have
    room and FAT32's 4 GB file limit is checked).
-3. Launch `ps2rc-3ds-profile.3dsx` from the Homebrew Launcher (not as a CIA). Leave it alone: the start takes about a
+3. Launch `ps2rc-3ds-auto-profile.3dsx` from the Homebrew Launcher (not as a CIA). Leave it alone: the start takes about a
    minute, then the route runs until the time cap. Power off or press START when it stops.
 4. Copy `SD:/3ds/ps2rc-sa/session.log` back to your PC and run
    `python 3ds-port/scripts/summarize-log.py session.log > summary.txt`. Attach **only that summary** to an issue, after

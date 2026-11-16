@@ -1,6 +1,7 @@
 # Old 3DS / Old 3DS XL / original 2DS experiment
 
-An Old-model resource and input profile exists, selected with `--model old3ds`.
+The universal default (`--model auto`) selects the compact resource and input profile on Old hardware.
+The forced `--model old3ds` target remains available for regression checks.
 It is **experimental and not established as playable**. Full builds and Old-mode Azahar city runs exist; original-model
 hardware remains untested. New 3DS emulator measurements do not predict Old 3DS speed.
 
@@ -9,6 +10,9 @@ hardware remains untested. New 3DS emulator measurements do not predict Old 3DS 
 After the normal local conversion step, on an explicitly authorized machine with your own disc data:
 
 ```bash
+python 3ds-port/ps2rc3ds.py build                 # universal
+python 3ds-port/ps2rc3ds.py azahar --hardware old3ds --azahar <DEDICATED_AZAHAR_EXECUTABLE>
+# Optional forced regression target:
 python 3ds-port/ps2rc3ds.py build --model old3ds
 python 3ds-port/ps2rc3ds.py build --model old3ds --mode profile --max-seconds 1500
 python 3ds-port/ps2rc3ds.py stage-sd <SD_ROOT> --model old3ds --yes
@@ -33,7 +37,7 @@ An emulator in Old-model mode still cannot prove hardware memory or performance 
 | Uploaded texels | RGBA8 | RGB565 / RGBA5551 / RGBA4 by alpha class |
 | Texture detail ceiling | existing level policy, up to 512 | world: 64 pixels / 8 KiB; HUD: 128 pixels / 32 KiB |
 | Static vertices converted per frame | unlimited release / 20,000 profile | 10,000 |
-| Linear heap reservation | libctru automatic | 8 MiB |
+| Linear heap reservation | auto: 32 MiB when remaining allowance is at least 88 MiB | auto: usually 8 MiB; forced Old: 8 MiB |
 
 The shared 32 MiB guest address window is preserved. Reduced buffers and draw budgets can omit meshes/textures;
 they do not preserve full scene detail. `--vert-budget` overrides the static draw budget, including `0` to disable it.
@@ -52,10 +56,10 @@ The static draw budget still skips whole meshes in draw order. A rejected static
 frame buffer, so later immediate/lit draws retain their space. These are separate limits from texture residency.
 
 Available normal heap depends on the full linked code/data/BSS and the homebrew launcher's memory allowance.
-Startup refuses a normal heap smaller than 36 MiB; this is only an initial floor, not a guarantee that later allocations fit.
+Startup refuses a normal heap smaller than 40 MiB for compact resources (56 MiB for full resources); this is only an initial floor, not a guarantee that later allocations fit.
 If this fails or a later allocation fails, record the numeric resource summary and test a supported launch with a larger
 application memory allowance. Do not infer compatibility from the console's physical RAM or remove bounds checks to force boot.
-New-model builds refuse old hardware with an explanatory message. New 3DS speedup is requested only on new hardware.
+Forced New-model builds refuse old hardware with an explanatory message. New 3DS speedup is requested only on new hardware.
 
 ## Controls without extra hardware
 

@@ -4,6 +4,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "hle.h"
 #include "hle_3ds_gfx.h"
 #include "hle_3ds_homogeneous.h"
@@ -67,9 +68,9 @@ static int projection_uniform = -1;
 static Hle3dsVertex *vertex_buffer;
 static Hle3dsVertex *overlay_vertex_buffer;
 static Hle3dsVertex *sky_vertex_buffer;
-static Hle3dsBatchRange batch_ranges[W3D_C3D_BATCH_CAPACITY];
-static RndVtx overlay_source[HLE_3DS_2D_VERTEX_CAPACITY];
-static Hle3ds2dBatch overlay_batches[HLE_3DS_2D_BATCH_CAPACITY];
+static Hle3dsBatchRange *batch_ranges;
+static RndVtx *overlay_source;
+static Hle3ds2dBatch *overlay_batches;
 static RndVtx sky_source[HLE_3DS_SKY_VERTEX_CAPACITY];
 static Hle3ds2dBatch sky_batches[HLE_3DS_SKY_BATCH_CAPACITY];
 static unsigned overlay_vertex_count, overlay_batch_count, overlay_dropped_vertices;
@@ -81,7 +82,7 @@ static unsigned near_clipped_triangles, near_rejected_triangles, capacity_droppe
 static unsigned capture_count;
 static int overlay_diag_logged;
 static u8 *capture_rgb;
-static int gfx_ready;
+static int gfx_ready, c3d_initialized;
 static uint32_t current_clear_color = CLEAR_COLOR;
 
 unsigned hle_3ds_gfx_frame_for_draw(void) { return present_count + 1u; }
@@ -163,7 +164,13 @@ static void fog_environment(int enabled, uint32_t color)
 
 int hle_3ds_gfx_init(void)
 {
-    if (!C3D_Init(HLE_3DS_CMDBUF_SIZE)) return 0;
+    if (!w3d_citro3d_init() || !hle_3ds_texture_init()) goto fail;
+    batch_ranges=calloc(W3D_C3D_BATCH_CAPACITY,sizeof(*batch_ranges));
+    overlay_source=calloc(HLE_3DS_2D_VERTEX_CAPACITY,sizeof(*overlay_source));
+    overlay_batches=calloc(HLE_3DS_2D_BATCH_CAPACITY,sizeof(*overlay_batches));
+    if (!batch_ranges || !overlay_source || !overlay_batches) goto fail;
+    if (!C3D_Init(HLE_3DS_CMDBUF_SIZE)) goto fail;
+    c3d_initialized=1;
     LOG("Citro3D command buffer: %u bytes\n", (unsigned)HLE_3DS_CMDBUF_SIZE);
     top = C3D_RenderTargetCreate(240, 400, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
     if (!top) goto fail;
@@ -791,15 +798,20 @@ void hle_3ds_gfx_present(void)
 void hle_3ds_gfx_shutdown(void)
 {
     gfx_ready = 0;
+    /* Fini waits for queued work and destroys render targets before GPU-backed images/buffers are freed. */
+    if (c3d_initialized) { C3D_Fini(); c3d_initialized=0; top=NULL; }
     hle_3ds_texture_shutdown();
+    w3d_citro3d_shutdown();
+    free(batch_ranges); batch_ranges=NULL;
+    free(overlay_source); overlay_source=NULL;
+    free(overlay_batches); overlay_batches=NULL;
     if (fog_ramp_ready) { C3D_TexDelete(&fog_ramp); fog_ramp_ready = 0; }
     if (capture_rgb) { linearFree(capture_rgb); capture_rgb = NULL; }
     if (vertex_buffer) { linearFree(vertex_buffer); vertex_buffer = NULL; }
     if (overlay_vertex_buffer) { linearFree(overlay_vertex_buffer); overlay_vertex_buffer = NULL; }
     if (sky_vertex_buffer) { linearFree(sky_vertex_buffer); sky_vertex_buffer = NULL; }
     if (shader_dvlb) { shaderProgramFree(&shader_program); DVLB_Free(shader_dvlb); shader_dvlb = NULL; }
-    if (top) { C3D_RenderTargetDelete(top); top = NULL; }
-    C3D_Fini();
+    top=NULL;
 }
 
 /* The host-only CPU 2D raster is intentionally not built here. Keep its hooks inert while the GPU 3D path is brought

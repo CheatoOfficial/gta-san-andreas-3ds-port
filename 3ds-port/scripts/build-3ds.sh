@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the New 3DS executable (3DSX) from the PS2RC translation made by `ps2rc3ds.py convert`.
+# Build the universal or forced-profile 3DS executable (3DSX) from the PS2RC translation made by `ps2rc3ds.py convert`.
 # Normally run through:  python 3ds-port/ps2rc3ds.py build [--mode release|profile]
 # Runs under devkitPro's MSYS2 bash on Windows, or any bash on Linux/macOS with devkitPro installed.
 #
@@ -15,11 +15,14 @@ WORK="${WORK:-$REPO/3ds-work/work}"
 PKG="${PKG:-$REPO/3ds-work/package/PS2RC_SLES52541}"
 DIST="${DIST:-$REPO/3ds-work/dist}"
 MODE="${MODE:-release}"
-MODEL="${MODEL:-new3ds}"
+MODEL="${MODEL:-auto}"
+EXPLICIT_BUDGET="${VERT_BUDGET+x}"
+AUTO_MODEL=0
 case "$MODEL" in
+  auto) AUTO_MODEL=1; OLD_MODEL=0; BUILD_SUFFIX="-auto"; DEFAULT_TEXTURE_SLOTS=512; DEFAULT_TEXTURE_KB=2048 ;;
   new3ds) OLD_MODEL=0; BUILD_SUFFIX=""; DEFAULT_TEXTURE_SLOTS=384; DEFAULT_TEXTURE_KB=20480 ;;
   old3ds) OLD_MODEL=1; BUILD_SUFFIX="-old3ds"; DEFAULT_TEXTURE_SLOTS=512; DEFAULT_TEXTURE_KB=2048 ;;
-  *) echo "MODEL must be new3ds or old3ds" >&2; exit 1 ;;
+  *) echo "MODEL must be auto, new3ds or old3ds" >&2; exit 1 ;;
 esac
 BDIR="${BDIR:-$REPO/3ds-work/build-3ds$BUILD_SUFFIX}"
 JOBS="${JOBS:-4}"
@@ -58,7 +61,14 @@ TEXTURE_BUDGET_KB="${HLE_3DS_TEXTURE_BUDGET_KB:-$DEFAULT_TEXTURE_KB}"
 if [ "$MODEL" = old3ds ] && { [ "$TEXTURE_BUDGET_KB" -gt 2048 ] || [ "$TEXTURE_SLOTS" -gt 512 ]; }; then
   echo "Old 3DS profile supports at most 2048 KiB textures and 512 slots" >&2; exit 1
 fi
-DEFS="-DHLE_3DS_OLD_MODEL=$OLD_MODEL -DHLE_3DS_SKY_PASS=${HLE_3DS_SKY_PASS:-1} -DHLE_3DS_TEX_SLOTS=$TEXTURE_SLOTS -DHLE_3DS_TEX_MAX_BYTES=$((TEXTURE_BUDGET_KB * 1024))u"
+DEFS="-DHLE_3DS_AUTO_MODEL=$AUTO_MODEL -DHLE_3DS_OLD_MODEL=$OLD_MODEL -DHLE_3DS_SKY_PASS=${HLE_3DS_SKY_PASS:-1}"
+if [ "$MODEL" = auto ]; then
+  if [ -n "${HLE_3DS_TEXTURE_SLOTS+x}${HLE_3DS_TEXTURE_BUDGET_KB+x}" ]; then
+    echo "Per-model texture overrides require --model old3ds or new3ds" >&2; exit 1
+  fi
+else
+  DEFS="$DEFS -DHLE_3DS_TEX_SLOTS=$TEXTURE_SLOTS -DHLE_3DS_TEX_MAX_BYTES=$((TEXTURE_BUDGET_KB * 1024))u"
+fi
 DEFS="$DEFS -DHLE_3DS_LIGHTING_DEBUG=0 -DHLE_3DS_DISABLE_DEPTH_DEBUG=0 -DHLE_3DS_DISABLE_CULL_DEBUG=0"
 [ "$MODEL" = old3ds ] && VERT_BUDGET="${VERT_BUDGET:-10000}"
 case "$MODE" in
@@ -75,7 +85,9 @@ case "$MODE" in
     VERT_BUDGET="${VERT_BUDGET:-20000}" ;;
   *) echo "MODE must be release or profile" >&2; exit 1 ;;
 esac
-[ "$VERT_BUDGET" != 0 ] && DEFS="$DEFS -DW3D_C3D_STATIC_VERT_BUDGET=${VERT_BUDGET}u"
+if [ "$MODEL" != auto ] || [ -n "$EXPLICIT_BUDGET" ]; then
+  DEFS="$DEFS -DW3D_C3D_STATIC_VERT_BUDGET=${VERT_BUDGET}u"
+fi
 export HLE_DEFS_EXTRA="$DEFS"
 echo "build-3ds: MODEL=$MODEL MODE=$MODE VERT_BUDGET=$VERT_BUDGET JOBS=$JOBS BDIR=$BDIR"
 
@@ -88,7 +100,7 @@ fi
 
 # The make rules do not track command-line -D flags: drop the objects that depend on them so a mode/option change
 # takes effect while the large translated-function object set stays cached.
-find "$BDIR/obj" -type f \( -name hle_3ds_main.o -o -name hle_main.o -o -name hle_sce.o -o -name hle_prof.o \
+find "$BDIR/obj" -type f \( -name hle_3ds_main.o -o -name hle_3ds_profile.o -o -name hle_3ds_heaps.o -o -name hle_main.o -o -name hle_sce.o -o -name hle_prof.o \
   -o -name hle_3ds_gfx.o -o -name hle_3ds_texture.o -o -name hle_w3d.o -o -name w3d_citro3d_backend.o \
   -o -name w3d_citro3d_adapter.o -o -name hle_3ds_platform.o -o -name hle_iop_servers.o -o -name audio_3ds.o -o -name hle_dev_pad_probe.o \) \
   -delete 2>/dev/null || true

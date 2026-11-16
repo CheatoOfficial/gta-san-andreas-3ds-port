@@ -51,10 +51,17 @@ about 2.9 GB). Output is large (about 4 GB) and game-derived: keep it private.
 ## 4. Build
 
 ```bash
-python 3ds-port/ps2rc3ds.py build                    # release build -> 3ds-work/dist/ps2rc-3ds-release.3dsx
+python 3ds-port/ps2rc3ds.py build                    # release build -> 3ds-work/dist/ps2rc-3ds-auto-release.3dsx
 python 3ds-port/ps2rc3ds.py build --mode profile     # timing/diagnostic build (scripted pad route, profiler, captures)
-python 3ds-port/ps2rc3ds.py build --model old3ds     # experimental Old 3DS / original 2DS resource profile
+python 3ds-port/ps2rc3ds.py build --model old3ds     # forced compact regression target
+python 3ds-port/ps2rc3ds.py build --model new3ds     # forced full regression target
 ```
+
+The default `--model auto` produces one binary for both console families. At startup it selects compact resources on
+Old hardware, or full resources on New hardware with at least 56 MiB normal and 32 MiB linear heap. A New-model
+launch with less memory uses compact resources and retains New-model controls. The pre-main allocator reserves
+8 MiB linear below an 88 MiB remaining process allowance, otherwise 32 MiB. Insufficient normal heap stops startup.
+These are memory policies, not evidence of real-hardware compatibility.
 
 The first build compiles about 11,000 translated functions (several minutes at `--jobs 8`); later builds reuse
 objects. Options: `--vert-budget N` (cap static vertices converted per frame, 0 = off), `--max-seconds N`
@@ -71,14 +78,16 @@ Uses a *portable* profile (a `user/` folder next to the executable, New 3DS mode
 with hard links where possible, and starts minimized. Use a copy of Azahar that is not your everyday install.
 The log is `<azahar>/user/sdmc/3ds/ps2rc-sa/session.log`; profile builds also write `gpu-frame-*.ppm` captures there.
 Copy the log right after each run: the next run overwrites it, and old files from other builds mislead.
-For Old-model tests pass `--model old3ds`; the existing portable config's model setting is updated.
+To test the same auto binary in Old mode, pass `--hardware old3ds`; use `--hardware new3ds` for New mode.
+`--model old3ds` or `--model new3ds` instead selects a forced regression artifact.
 Stop the emulator before switching settings and use a dedicated copy.
 
 **Real 3DS:** see [3DS_HARDWARE_TEST.md](3DS_HARDWARE_TEST.md). `stage-sd SD_ROOT` copies everything to
 `SD:/3ds/ps2rc-sa/` (dry run unless you add `--yes`; it checks FAT32's 4 GB file limit; content is compared using
 SHA-256 before skipping an existing file, but files that no longer exist after a reconversion are NOT deleted, so
 remove `SD:/3ds/ps2rc-sa/` first when you reconvert).
-Pass `--model old3ds` when staging that model; automatic selection never takes the other model's artifact.
+Staging defaults to the auto artifact. Pass `--model old3ds` or `--model new3ds` only for a forced build.
+Artifact names are distinct; a legacy New-model build is never mistaken for the universal binary.
 
 ## 6. Tests (no game data needed)
 
@@ -87,8 +96,8 @@ python 3ds-port/ps2rc3ds.py test
 ```
 Runs the 3DS host unit tests, a randomised equivalence test of the vertex converter, the game-data guard and PS2RC's
 quick pytest set. Run it before every commit.
-With devkitPro installed, `bash 3ds-port/scripts/native-checks.sh` also compiles the native ARM11 sources for both
-models without accessing disc data or translation outputs. This does not link or run the full game.
+With devkitPro installed, `bash 3ds-port/scripts/native-checks.sh` also compiles the native ARM11 sources for all three
+build targets without accessing disc data or translation outputs. This does not link or run the full game.
 
 ## Troubleshooting
 

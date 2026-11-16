@@ -54,8 +54,9 @@ static uint16_t first16(const Hle3dsTexture *t)
     uint32_t at=hle_3ds_texture_texel_index(0,0,t->tex.width,t->tex.height);
     memcpy(&value,(uint8_t *)t->tex.data+at*2u,2); return value;
 }
-int main(void)
+static void exercise(int hardware)
 {
+    hle_3ds_profile_select(hardware,80u*HLE_3DS_MIB,32u*HLE_3DS_MIB);
     const uint8_t red[4]={255,0,0,255}, green[4]={0,255,0,255}, blue[4]={0,0,255,0}, blend[4]={255,128,0,128};
     assert(hle_3ds_pack_rgb565(red)==0xF800 && hle_3ds_pack_rgb565(green)==0x07E0);
     assert(hle_3ds_pack_rgba5551(red)==0xF801 && hle_3ds_pack_rgba5551(blue)==0x003E);
@@ -66,7 +67,7 @@ int main(void)
     const Hle3dsTexture *world=hle_3ds_texture_get(r); assert(world);
     assert(hle_3ds_texture_prepare_2d(r));
     const Hle3dsTexture *hud=hle_3ds_texture_get_2d(r); assert(hud);
-    if(HLE_3DS_OLD_MODEL) {
+    if(HLE_3DS_COMPACT) {
         assert(world!=hud && world->tex.fmt==GPU_RGB565);
         assert(tex_bytes(&world->tex)==8192u && world->tex.width==64 && hud->tex.width==128 && tex_bytes(&hud->tex)==32768u);
         assert(first16(world)==0x001F && first16(hud)==0x001F);
@@ -85,14 +86,14 @@ int main(void)
     assert(frees>before && !hle_3ds_texture_get(r) && !hle_3ds_texture_get_2d(r));
     packet(0x40);
     assert(hle_3ds_texture_prepare(r,&alpha) && alpha==2);
-    if(HLE_3DS_OLD_MODEL) { world=hle_3ds_texture_get(r); assert(world->tex.fmt==GPU_RGBA4 && first16(world)==0x00F8); }
+    if(HLE_3DS_COMPACT) { world=hle_3ds_texture_get(r); assert(world->tex.fmt==GPU_RGBA4 && first16(world)==0x00F8); }
     hle_3ds_texture_forget(r); hle_3ds_texture_frame_reset(); hle_3ds_texture_gpu_synced();
     packet(0); ram[0x20050+3]=0x80; /* cutout contains opaque and transparent texels */
     assert(hle_3ds_texture_prepare(r,&alpha) && alpha==1);
-    if(HLE_3DS_OLD_MODEL) assert(hle_3ds_texture_get(r)->tex.fmt==GPU_RGBA5551);
+    if(HLE_3DS_COMPACT) assert(hle_3ds_texture_get(r)->tex.fmt==GPU_RGBA5551);
     hle_3ds_texture_shutdown(); assert(live_bytes==0);
 
-    if(HLE_3DS_OLD_MODEL) {
+    if(HLE_3DS_COMPACT) {
         packet(0x80);
         packet_at(0x50000u,32,0x80);
         for(unsigned i=0;i<300;i++) {
@@ -108,5 +109,15 @@ int main(void)
         hle_3ds_texture_shutdown(); assert(live_bytes==0);
     }
     puts("production 3DS texture cache: packing, alpha, detail tiers, bounded residency and deferred invalidation passed");
+    assert(live_bytes==0);
+}
+
+int main(void)
+{
+#if HLE_3DS_AUTO_MODEL
+    exercise(0); exercise(1); /* the same production cache executable, both startup selections */
+#else
+    exercise(!HLE_3DS_OLD_MODEL);
+#endif
     return 0;
 }

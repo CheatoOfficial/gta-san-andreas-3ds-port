@@ -49,10 +49,12 @@ def test_build_models_use_separate_directories_and_quote_the_script(monkeypatch)
     monkeypatch.setattr(port, "find_bash", lambda: "bash")
     monkeypatch.setattr(port, "run", lambda cmd, **kw: calls.append((cmd, kw)) or 0)
     args = dict(mode="release", jobs=2, vert_budget=None, max_seconds=None, python_bin=None)
-    for model in ("new3ds", "old3ds"):
+    for model in ("new3ds", "old3ds", "auto"):
         assert port.cmd_build(SimpleNamespace(model=model, **args)) == 0
     assert calls[0][1]["env"]["BDIR"] != calls[1][1]["env"]["BDIR"]
     assert calls[1][1]["env"]["MODEL"] == "old3ds"
+    assert calls[2][1]["env"]["MODEL"] == "auto"
+    assert len({kw["env"]["BDIR"] for _,kw in calls})==3
     assert shlex.split(calls[1][0][2]) == ["bash", port.msys(port.REPO / "3ds-port/scripts/build-3ds.sh")]
 
 
@@ -64,6 +66,11 @@ def test_model_selection_never_picks_the_other_models_newer_file(tmp_path, monke
     new.write_text("synthetic new model marker")
     os.utime(new, ns=(new.stat().st_atime_ns, old.stat().st_mtime_ns + 2_000_000_000))
     assert port.newest_3dsx("old3ds") == old
+    assert port.newest_3dsx("new3ds") == new
+    assert port.newest_3dsx("auto") is None  # old default filename is NOT proof of a universal artifact
+    auto = tmp_path / "ps2rc-3ds-auto-release.3dsx"
+    auto.write_text("synthetic universal marker")
+    assert port.newest_3dsx() == auto
     assert port.newest_3dsx("new3ds") == new
     old.unlink()
     assert port.newest_3dsx("old3ds") is None

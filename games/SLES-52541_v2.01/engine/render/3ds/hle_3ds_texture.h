@@ -12,6 +12,7 @@ typedef struct {
     uint8_t alpha_class;
 } Hle3dsTexture;
 
+int hle_3ds_texture_init(void);
 int hle_3ds_texture_prepare(uint32_t raster, int *alpha_class);
 const Hle3dsTexture *hle_3ds_texture_get(uint32_t raster);
 int hle_3ds_texture_prepare_2d(uint32_t raster);

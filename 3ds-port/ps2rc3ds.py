@@ -176,7 +176,7 @@ def cmd_build(a):
     env = dict(os.environ)
     env.update({
         "REPO": msys(REPO), "WORK": msys(WORK), "PKG": msys(PKG),
-        "BDIR": msys(BUILD if a.model == "new3ds" else WORKROOT / "build-3ds-old3ds"), "DIST": msys(DIST),
+        "BDIR": msys(BUILD if a.model == "new3ds" else WORKROOT / ("build-3ds-" + a.model)), "DIST": msys(DIST),
         "MODEL": a.model, "MODE": a.mode, "JOBS": str(a.jobs or os.cpu_count() or 4),
     })
     if IS_WIN:   # devkitPro's login shell resets PATH: hand it the Python running this script
@@ -204,8 +204,8 @@ def cmd_test(a):
 
 
 # ---------------------------------------------------------------- staging
-def newest_3dsx(model="new3ds"):
-    prefix = "ps2rc-3ds-old3ds" if model == "old3ds" else "ps2rc-3ds"
+def newest_3dsx(model="auto"):
+    prefix = "ps2rc-3ds" if model == "new3ds" else "ps2rc-3ds-" + model
     # Exact names prevent staging the other model's newest build by accident.
     cands = [DIST / f"{prefix}-{mode}.3dsx" for mode in ("release", "profile")]
     cands = sorted((p for p in cands if p.is_file()), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -323,7 +323,8 @@ def cmd_azahar(a):
     if tdsx is None:
         print("No 3DSX found; run `build` first.", file=sys.stderr)
         return 1
-    configure_azahar(cfg, a.model)
+    hardware = a.hardware or (a.model if a.model != "auto" else "new3ds")
+    configure_azahar(cfg, hardware)
     dest = user / "sdmc" / SD_SUBDIR
     for stale in list(dest.glob("session.log")) + list(dest.glob("gpu-frame-*")):
         stale.unlink()                       # old logs/captures from other builds would contaminate this run
@@ -351,15 +352,16 @@ def main():
     p.add_argument("--pull", action="store_true", help="allow downloading the pspdev Docker image")
     p.add_argument("--jobs", type=int); p.set_defaults(f=cmd_convert)
     p = sub.add_parser("build"); p.add_argument("--mode", choices=["release", "profile"], default="release")
-    p.add_argument("--model", choices=["new3ds", "old3ds"], default="new3ds")
+    p.add_argument("--model", choices=["auto", "new3ds", "old3ds"], default="auto")
     p.add_argument("--vert-budget", dest="vert_budget", type=int); p.add_argument("--max-seconds", dest="max_seconds", type=int)
     p.add_argument("--python-bin", dest="python_bin"); p.add_argument("--jobs", type=int); p.set_defaults(f=cmd_build)
     p = sub.add_parser("test"); p.set_defaults(f=cmd_test)
     p = sub.add_parser("stage-sd"); p.add_argument("sd_root"); p.add_argument("--3dsx", dest="threedsx")
-    p.add_argument("--model", choices=["new3ds", "old3ds"], default="new3ds")
+    p.add_argument("--model", choices=["auto", "new3ds", "old3ds"], default="auto")
     p.add_argument("--yes", action="store_true"); p.set_defaults(f=cmd_stage_sd)
     p = sub.add_parser("azahar"); p.add_argument("--azahar", required=True); p.add_argument("--3dsx", dest="threedsx")
-    p.add_argument("--model", choices=["new3ds", "old3ds"], default="new3ds")
+    p.add_argument("--model", choices=["auto", "new3ds", "old3ds"], default="auto")
+    p.add_argument("--hardware", choices=["new3ds", "old3ds"], help="emulated console, independent of the binary target")
     p.add_argument("--visible", action="store_true"); p.set_defaults(f=cmd_azahar)
     a = ap.parse_args()
     return a.f(a)

@@ -173,13 +173,10 @@ uint16_t hle_plat_pad_read(uint8_t sticks[4])
     const u32 keys = hidKeysHeld();
     circlePosition circle = {0, 0}, cstick = {0, 0};
     hidCircleRead(&circle);
-#if HLE_3DS_OLD_MODEL
-    return hle_3ds_pad_map_old(keys, circle.dx, circle.dy, sticks);
-#else
+    if (!hle_3ds_extra_controls) return hle_3ds_pad_map_old(keys, circle.dx, circle.dy, sticks);
     irrstCstickRead(&cstick);
     hle_3ds_pad_map_sticks(circle.dx, circle.dy, cstick.dx, cstick.dy, sticks);
     return hle_3ds_pad_map_buttons(keys);
-#endif
 }
 
 void hle_plat_backtrace(void) {}
