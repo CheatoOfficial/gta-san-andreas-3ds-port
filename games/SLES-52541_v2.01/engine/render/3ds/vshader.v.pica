@@ -1,5 +1,11 @@
+; v3 carries the world vertex's view-space z. Per batch, fogparams.xy = (a, b) gives the PS2 fog
+; factor clamp(a*z + b, 0, 1) (2D passes use a = 0, b = 1: no fog). uvscale.xy is the bound
+; texture's padding scale (1 for passes whose UVs are already scaled).
 .fvec projection[4]
+.fvec fogparams
+.fvec uvscale
 .constf k(0.99609375, 0.001953125, 0.5, 1.0)
+.constf limits(0.0, 1.0, 0.0, 0.0)
 .out outpos position
 .out outclr color
 .out outtc0 texcoord0.st
@@ -8,7 +14,7 @@
 .alias inpos v0
 .alias inclr v1
 .alias inuv v2
-.alias infog v3
+.alias inviewz v3
 .proc main
  mov r0, inpos
  dp4 outpos.x, projection[0], r0
@@ -16,8 +22,12 @@
  dp4 outpos.z, projection[2], r0
  dp4 outpos.w, projection[3], r0
  mov outclr, inclr
- mov outtc1, inuv
- mul r1.x, k.x, infog.x
+ mul outtc1, uvscale, inuv
+ mul r1.x, fogparams.x, inviewz.x
+ add r1.x, fogparams.y, r1.x
+ max r1.x, limits.x, r1.x
+ min r1.x, limits.y, r1.x
+ mul r1.x, k.x, r1.x
  add r1.x, k.y, r1.x
  mul outtc0.x, r1.x, inpos.w
  mul outtc0.y, k.z, inpos.w
