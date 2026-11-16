@@ -305,6 +305,33 @@ conversion in the busiest window, the upper bound for moving directional lightin
 `hle.memtrap` zone (~22 ms/iteration) is scratchpad-to-RAM DMA register traffic (D8 CHCR/MADR/QWC/SADR, ~730 kicks
 per iteration); its time likely includes interrupt work delivered at those safe points.
 
+## Screened batch copy for GPU clipping (2026-11-16, `HLE_3DS_GPU_CLIP=1` only)
+
+`convert_vertex` now keeps a running sum of each converted position, UV and view Z (non-finite if any of them is)
+and notes any vertex not in front of the near plane; the backend stores the result per batch
+(`w3d_citro3d_take_screen`, `W3D_C3D_SCREEN_*`). When a batch was screened finite and is unfogged or has no vertex
+behind the near plane, every triangle would take the present pass's copy-as-is branch, so the batch is copied with
+one `memcpy` (`gpu_batch_copies_as_is`). Other batches, and the unconverted "again" copies, keep the per-triangle
+path. Without the switch the screen is compiled out (`UNKNOWN`) and the default build is unchanged. Host test `screen`
+checks clean/NaN/infinity/behind cases against the per-triangle tests.
+
+Same route, private Azahar, GPU clip on, compared with the shader-fog build above:
+
+| Window (New / Old vertices) | New submit | New submit, screened copy | Old submit | Old submit, screened copy |
+|---|---:|---:|---:|---:|
+| 109,796 / 65,244 | 58.4 | 32.5 | 35.6 | 20.1 |
+| 73,288 / 56,011 | 41.2 | 23.8 | 30.7 | 17.5 |
+| 65,201 / 47,249 | 35.9 | 20.3 | 27.0 | 15.6 |
+| 45,060 / 32,224 | 25.6 | 14.8 | 18.6 | 10.8 |
+
+Screening costs ~3-4 ms of conversion in the busiest New window (lit 125.0 -> 127.8 ms, static 16.2 -> 17.0 ms), so
+that window goes from ~329 to ~305 ms per frame (gap + wait + submit), and from ~343 ms on `main` with GPU clipping.
+All captures (1,360-1,720 in both modes; 1,900-1,930 with 11 fogged crossings at 1,920) are byte-identical to the
+previous builds. The default-switch build was re-measured: identical timings and byte-identical captures.
+
+Double-buffered zero-copy was considered and not done: in this route the full profile's linear heap falls to
+6.4 MiB free (14 MiB of textures cached, 20 MiB budget), so a second 8.25 MiB vertex buffer does not fit.
+
 ## Known issues from the pre-publication review (2026-11-15)
 
 * Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a

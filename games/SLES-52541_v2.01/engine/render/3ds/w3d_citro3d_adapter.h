@@ -22,6 +22,15 @@ int w3d_citro3d_convert_mesh_range(const W3dCam *camera, const float world[12], 
                                   const W3dMeshView *mesh, const uint8_t *verts_override, uint32_t first_vert,
                                   const uint32_t *prim_words, uint32_t nprims, W3dC3dVertex *output,
                                   int output_capacity);
+/* Screening of every vertex converted since the previous call (which it resets): NONFINITE if any converted
+   position, UV or view Z was not finite (or the check overflowed), BEHIND if any vertex was not strictly in front
+   of the near plane (clip z + w >= 0 fails). UNKNOWN marks batches whose vertices were never screened; builds
+   without HLE_3DS_GPU_CLIP skip screening and always return UNKNOWN. */
+#define W3D_C3D_SCREEN_NONFINITE 1u
+#define W3D_C3D_SCREEN_BEHIND 2u
+#define W3D_C3D_SCREEN_UNKNOWN 4u
+unsigned w3d_citro3d_take_screen(void);
+
 int w3d_citro3d_convert_lit_range(const W3dCam *camera, const float world[12], const W3dState *state,
                                  const W3dState *lit_state, const W3dLights *lights, int nbones,
                                  const float bones[8][12], const W3dMeshView *mesh, const uint8_t *verts_override,

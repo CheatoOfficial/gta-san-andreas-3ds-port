@@ -482,6 +482,21 @@ void hle_3ds_gfx_present(void)
         unsigned source_end = batch->first_vertex + batch->vertex_count;
         if (source_end > (unsigned)source_count) source_end = (unsigned)source_count;
         const unsigned output_first = (unsigned)output_count;
+#if HLE_3DS_GPU_CLIP
+        /* A batch whose conversion saw only finite values, and no vertex behind the near plane when fogged, would
+           take the copy-as-is branch below for every triangle: copy it in one block instead. */
+        if (gpu_batch_copies_as_is(batch->screen, batch->state.fog) && source_end > batch->first_vertex) {
+            const unsigned n = (source_end - batch->first_vertex) / 3u * 3u;
+            if (n <= W3D_C3D_FRAME_VERTEX_CAPACITY - (unsigned)output_count) {
+                memcpy(&vertex_buffer[output_count], &source[batch->first_vertex], (size_t)n * sizeof(*vertex_buffer));
+                output_count += (int)n;
+                drawn_triangles += n / 3u;
+                batch_ranges[b].first = output_first;
+                batch_ranges[b].count = n;
+                continue;
+            }
+        }
+#endif
         for (unsigned i = batch->first_vertex; i + 2u < source_end; i += 3u) {
             const W3dC3dVertex *in = &source[i];
             if (!triangle_finite(in)) { ++dropped_w; continue; }

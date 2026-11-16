@@ -25,6 +25,7 @@ run lighting_prepare_debug -O2 -DHLE_3DS_LIGHTING_DEBUG=1 "$T/lighting_3ds_prepa
 run homogeneous    "$T/homogeneous_3ds_main.c"
 run gpu_clip_fog   "$T/gpu_clip_fog_3ds_main.c"
 run fog_linear     "$T/fog_linear_3ds_main.c"
+run screen         -DHLE_3DS_GPU_CLIP=1 -fno-fast-math "$T/screen_3ds_main.c" "$R/3ds/w3d_citro3d_adapter.c"
 run texture_layout "$T/texture_3ds_layout_main.c"
 run texture_cache -I"$T/3ds_texture_stubs" -I"$R/psp" "$T/texture_3ds_cache_main.c" "$R/3ds/hle_3ds_texture.c" "$R/psp/texconv.c"
 run texture_cache_old -DHLE_3DS_OLD_MODEL=1 -I"$T/3ds_texture_stubs" -I"$R/psp" "$T/texture_3ds_cache_main.c" "$R/3ds/hle_3ds_texture.c" "$R/psp/texconv.c"

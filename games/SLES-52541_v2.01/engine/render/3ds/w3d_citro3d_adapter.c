@@ -44,6 +44,25 @@ static uint32_t apply_simple_light(uint32_t color, const W3dState *state) {
 #endif
 }
 
+/* Screening for the present pass (w3d_citro3d_take_screen). The sum of every float output is non-finite whenever
+   one of them is (colours come from bytes and are always finite); a huge finite sum can also overflow, which only
+   sends a batch through the checked path. Any vertex not in front of the near plane (or NaN) sets the behind flag. */
+#ifndef HLE_3DS_GPU_CLIP
+#define HLE_3DS_GPU_CLIP 0
+#endif
+static float screen_sum;
+static unsigned screen_behind;
+
+unsigned w3d_citro3d_take_screen(void)
+{
+    if (!HLE_3DS_GPU_CLIP) return W3D_C3D_SCREEN_UNKNOWN;   /* only the GPU-clip present pass uses the screen */
+    unsigned flags = screen_behind ? W3D_C3D_SCREEN_BEHIND : 0u;
+    if (!(screen_sum - screen_sum == 0.0f)) flags |= W3D_C3D_SCREEN_NONFINITE;
+    screen_sum = 0.0f;
+    screen_behind = 0;
+    return flags;
+}
+
 static void convert_vertex(const W3dCam *camera, const float world[12], const W3dState *state,
                            const W3dVC *input, W3dC3dVertex *output) {
     const float x = input->x * world[0] + input->y * world[3] + input->z * world[6] + world[9];
@@ -60,6 +79,11 @@ static void convert_vertex(const W3dCam *camera, const float world[12], const W3
 
     output->uv[0] = input->u * state->uscale + state->ubase;
     output->uv[1] = input->v * state->uscale + state->vbase;
+#if HLE_3DS_GPU_CLIP
+    screen_sum += output->clip[0] + output->clip[1] + output->clip[2] + output->clip[3] +
+                  output->uv[0] + output->uv[1] + z;
+    if (!(output->clip[2] + output->clip[3] >= 0.0f)) screen_behind = 1;
+#endif
 
     const uint32_t color = apply_simple_light(input->c, state);
     for (int channel = 0; channel < 4; ++channel)

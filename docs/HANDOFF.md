@@ -235,10 +235,19 @@ Measured before choosing the next step (private, deterministic route, New mode, 
 Committed: world fog and UV scale in the vertex shader (numbers in `docs/3DS_STATUS.md`, "Shader-side fog and UV scale").
 The GPU vertex layout now equals `W3dC3dVertex` (compile-time asserts), which is the precondition for:
 
-Next (not started): zero-copy world vertices for the full profile with GPU clipping. Make `frame_vertices` two
-linear buffers (8.25 MiB each at 196,608 vertices; fits the 32 MiB full-profile linear heap, not compact) swapped per
-present, and have conversion flag each batch whose vertices include a non-finite value or (fogged batches) a vertex
-behind the near plane. Draw clean batches straight from the conversion buffer; send flagged batches through the
-existing copy/clip loop into `vertex_buffer` and draw them in their original order (switching BufInfo). Flush the
-data cache for the written range before submission (Azahar does not model caches, so this is a hardware-only bug if
-missed). Expected: most of the 55.5 ms loop. Compact keeps the copy path.
+Then committed: screened batch copy (`HLE_3DS_GPU_CLIP=1` only; `docs/3DS_STATUS.md`, "Screened batch copy").
+Conversion screens every vertex (finite, in front of near plane); clean batches are copied with one memcpy instead of
+per-triangle checks. Busiest window submit 58.4 -> 32.5 ms New, 35.6 -> 20.1 ms Old; captures byte-identical,
+including the fogged-crossing frames. With GPU clipping, that window is now ~305 ms/frame vs ~343 ms on `main`.
+
+Zero-copy (drawing straight from conversion output) was dropped for now: it needs a second 8.25 MiB linear vertex
+buffer and the full profile only had 6.4 MiB linear free at the route's texture peak. It would need smaller vertices
+(e.g. RGBA8 colour, 32 bytes) or a smaller texture budget first. Separately, nothing flushes the data cache for
+`vertex_buffer` before the GPU reads it (Citro3D's frame end flushes only its command list, per its headers); Azahar
+does not model caches. If hardware shows torn or stale world geometry, add `GSPGPU_FlushDataCache` on the written range.
+
+Suggested next steps, in order:
+1. Hardware run of the GPU-clip build (it is now ~11% faster per frame in Azahar than default `main`). If clipping,
+   fog and depth look right on a real console, consider making `HLE_3DS_GPU_CLIP=1` the default.
+2. Remaining CPU renderer cost in the busiest window: lit conversion ~128 ms (directional lighting ~30 ms of it; the
+   GPU lighting probe is ready), static ~17 ms, world state/draws ~14 ms for ~600 batches, game side ~130 ms.
