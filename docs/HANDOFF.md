@@ -199,3 +199,22 @@ The private release package has READ-ME-FIRST.txt covering Homebrew Launcher sta
 log collection and limits. START is game pause during normal operation, not an unconditional quit key.
 Saving is unimplemented. Need real New 3DS LL memory/performance, controls, sound and sustained gameplay
 before any playable/validated claim. Further renderer work can proceed independently from this hardware gate.
+
+
+## Codex: rejected ambient-only lighting micro-optimization (2026-11-16)
+
+Candidate 2bf848b precomputed flat ambient colour and skipped unused normal decode/skin/transform when
+there were no directional lights. Fourteen host executables, 6000 adapter cases, 11 selected Python tests
+and all three native targets passed, and the full profile build linked. Tests alone did not justify it.
+The isolated New-mode same-route measurement was slower at matching vertex/call counts:
+53131/243: 68.0 -> 68.7 ms; 89706/501: 124.9 -> 127.0 ms; 51071/267: 73.6 -> 75.2 ms.
+Baseline is the previous uninstrumented long-strip candidate run, whose long path was never used in the
+measured route. These are single-run stage measurements, not a broad statistical performance claim.
+Three fresh captures (1360/1480/1600) matched baseline byte-for-byte. The run was deliberately stopped
+after the busy windows, by verified PID/path/start time; raw evidence and diagnostic builds stay private.
+
+Reverted the candidate as 3adcf06. Runtime source (games/hle/mk) again matches origin/main 39a9571 exactly.
+Do not merge 2bf848b. The original hardware-test release hash/package remain unchanged. Neither this
+candidate nor the parked long-strip change solves the measured lighting bottleneck. Prefer a larger,
+switchable GPU transform/lighting approach with independent correctness probes over additional speculative
+normal-loop tweaks. Hardware results and physical controls/audio are still pending the user's console.
