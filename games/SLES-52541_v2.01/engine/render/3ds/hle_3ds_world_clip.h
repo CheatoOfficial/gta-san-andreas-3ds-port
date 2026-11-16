@@ -49,4 +49,12 @@ static inline int gpu_fog_needs_cpu_clip(int fog, float d0, float d1, float d2)
     const unsigned inside = (d0 >= 0.0f) + (d1 >= 0.0f) + (d2 >= 0.0f);
     return inside != 0 && inside != 3;
 }
+
+/* With GPU clipping, every triangle of a batch is copied unchanged when the conversion screen saw only finite
+   values and, for a fogged batch, no vertex behind the near plane (so no fogged crossing exists). */
+static inline int gpu_batch_copies_as_is(unsigned screen, int fog)
+{
+    if (screen & (W3D_C3D_SCREEN_NONFINITE | W3D_C3D_SCREEN_UNKNOWN)) return 0;
+    return !(fog && (screen & W3D_C3D_SCREEN_BEHIND));
+}
 #endif

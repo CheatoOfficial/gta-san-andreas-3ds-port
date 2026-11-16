@@ -269,6 +269,69 @@ Compared with this fresh reference, the fixed prototype differs in 3, 0, 8 and 1
 1,920 and 1,930 respectively; maximum channel delta is one level. The near-camera wall/player/HUD frame was inspected
 privately. This limited route comparison does not replace the synthetic fog-gradient regression or hardware validation.
 
+Re-measured after the fix (Claude, same route, New mode, switch on vs off): busiest-window submit 146.0 -> 72.1 ms
+(109,796 vertices), 99.3 -> 49.8 ms (73,288). The fallback costs ~5 ms against PR #6 alone; still ~50% less.
+
+## Shader-side fog and UV scale (2026-11-16)
+
+World vertices now reach the GPU exactly as the adapter converted them (`W3dC3dVertex` and the GPU vertex share one
+layout, checked at compile time). The vertex shader takes the view-space Z in the former fog slot and applies two
+per-batch uniforms: `fogparams` (`clamp(a*z + b, 0, 1)` from `hle_3ds_fog_linear`, equal to `hle_3ds_fog_factor` up to
+float rounding; host test `fog_linear`) and `uvscale` (the texture's padding scale). The present pass no longer divides
+for fog or scales UVs per vertex; 2D passes use no fog and unit scale. Both the default path and `HLE_3DS_GPU_CLIP=1`.
+
+Measuring first (temporary private timers, not committed): in the busiest New-mode window with GPU clipping, the world
+vertex loop was 55.5 ms of the 72.1 ms submit and the ~600 batches' state changes and draws 14.3 ms. A plain-copy
+experiment bounded this change at ~11 ms, so the copy itself, not fog/UV, is what remains.
+
+Same route, private Azahar, submit ms per frame (vertex counts and all other timers identical between builds):
+
+| Window (New / Old vertices) | New, clip off | New, clip off + this | New, GPU clip | New, GPU clip + this | Old, GPU clip | Old, GPU clip + this |
+|---|---:|---:|---:|---:|---:|---:|
+| 109,796 / 65,244 | 146.0 | 135.3 | 72.1 | 58.4 | 40.8 | 35.6 |
+| 73,288 / 56,011 | 99.3 | 92.7 | 49.8 | 41.2 | 34.9 | 30.7 |
+| 65,201 / 47,249 | 88.6 | 82.3 | 44.0 | 35.9 | 30.7 | 27.0 |
+| 45,060 / 32,224 | 62.0 | 57.7 | 31.2 | 25.6 | 21.0 | 18.6 |
+
+(The Old columns are PR #6 code without the PR #7 fallback, whose route captures had no fogged crossings.)
+Captures at frames 1,360-1,720 match the previous build of the same mode in all but one pixel (one level) for New
+clip off, New GPU clip and Old GPU clip. Captures at 1,900-1,930 (frame 1,920 has 11 CPU fog crossings) are
+byte-identical to the PR #7 New-mode captures. 0 texture omissions, 0 adapter errors, no fatal entries in every run.
+Azahar only; real PICA float24 fog evaluation is unverified (differences would be sub-level in the fog ramp).
+
+Also measured and not used: `mul255` without the division (exact shift form) saved only ~0.3 ms because most draws skip
+it; skipping directional lighting entirely (`HLE_3DS_LIGHTING_DEBUG` on lit vertices only) saved 30.5 of 124.6 ms lit
+conversion in the busiest window, the upper bound for moving directional lighting to the GPU. The guest-side
+`hle.memtrap` zone (~22 ms/iteration) is scratchpad-to-RAM DMA register traffic (D8 CHCR/MADR/QWC/SADR, ~730 kicks
+per iteration); its time likely includes interrupt work delivered at those safe points.
+
+## Screened batch copy for GPU clipping (2026-11-16, `HLE_3DS_GPU_CLIP=1` only)
+
+`convert_vertex` now keeps a running sum of each converted position, UV and view Z (non-finite if any of them is)
+and notes any vertex not in front of the near plane; the backend stores the result per batch
+(`w3d_citro3d_take_screen`, `W3D_C3D_SCREEN_*`). When a batch was screened finite and is unfogged or has no vertex
+behind the near plane, every triangle would take the present pass's copy-as-is branch, so the batch is copied with
+one `memcpy` (`gpu_batch_copies_as_is`). Other batches, and the unconverted "again" copies, keep the per-triangle
+path. Without the switch the screen is compiled out (`UNKNOWN`) and the default build is unchanged. Host test `screen`
+checks clean/NaN/infinity/behind cases against the per-triangle tests.
+
+Same route, private Azahar, GPU clip on, compared with the shader-fog build above:
+
+| Window (New / Old vertices) | New submit | New submit, screened copy | Old submit | Old submit, screened copy |
+|---|---:|---:|---:|---:|
+| 109,796 / 65,244 | 58.4 | 32.5 | 35.6 | 20.1 |
+| 73,288 / 56,011 | 41.2 | 23.8 | 30.7 | 17.5 |
+| 65,201 / 47,249 | 35.9 | 20.3 | 27.0 | 15.6 |
+| 45,060 / 32,224 | 25.6 | 14.8 | 18.6 | 10.8 |
+
+Screening costs ~3-4 ms of conversion in the busiest New window (lit 125.0 -> 127.8 ms, static 16.2 -> 17.0 ms), so
+that window goes from ~329 to ~305 ms per frame (gap + wait + submit), and from ~343 ms on `main` with GPU clipping.
+All captures (1,360-1,720 in both modes; 1,900-1,930 with 11 fogged crossings at 1,920) are byte-identical to the
+previous builds. The default-switch build was re-measured: identical timings and byte-identical captures.
+
+Double-buffered zero-copy was considered and not done: in this route the full profile's linear heap falls to
+6.4 MiB free (14 MiB of textures cached, 20 MiB budget), so a second 8.25 MiB vertex buffer does not fit.
+
 ## Known issues from the pre-publication review (2026-11-15)
 
 * Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a

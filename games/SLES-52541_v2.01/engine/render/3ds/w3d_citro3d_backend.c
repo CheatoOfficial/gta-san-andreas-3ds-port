@@ -63,7 +63,7 @@ static int reserve_vertices(unsigned count, W3dC3dVertex **out)
     return 1;
 }
 
-static void record_batch(unsigned first_vertex, unsigned vertex_count)
+static void record_batch(unsigned first_vertex, unsigned vertex_count, unsigned screen)
 {
     if (!vertex_count) return;
     if (frame_batch_count >= W3D_C3D_BATCH_CAPACITY) {
@@ -80,6 +80,7 @@ static void record_batch(unsigned first_vertex, unsigned vertex_count)
     batch->state = current_draw_state;
     batch->far_z = current_camera.far_z;
     batch->fog_z = current_camera.fog_z;
+    batch->screen = screen;
 }
 
 int w3d_citro3d_init(void)
@@ -212,6 +213,7 @@ void w3d_be_range(const W3dMeshView *mesh, const uint8_t *verts_override, uint32
     const unsigned frame_start = frame_vertex_count;
     if (!reserve_vertices(W3D_C3D_FRAME_VERTEX_CAPACITY - frame_vertex_count, &out)) return;
     const int cap = (int)(W3D_C3D_FRAME_VERTEX_CAPACITY - (unsigned)(out - frame_vertices));
+    (void)w3d_citro3d_take_screen();
     const uint64_t conv_t0 = svcGetSystemTick();
     const int written = mesh && mesh->fmt == W3D_FMT_LIT
         ? w3d_citro3d_convert_lit_range(&current_camera, current_world, &current_state, &current_lit_state,
@@ -239,7 +241,7 @@ void w3d_be_range(const W3dMeshView *mesh, const uint8_t *verts_override, uint32
         return;
     }
     frame_vertex_count = (unsigned)(out - frame_vertices) + (unsigned)written;
-    record_batch(frame_start, (unsigned)written);
+    record_batch(frame_start, (unsigned)written, w3d_citro3d_take_screen());
 }
 
 void w3d_be_mesh(const W3dMeshView *mesh, const uint8_t *verts_override)
@@ -287,11 +289,12 @@ const void *w3d_be_indexed(const W3dMeshView *mesh, const uint8_t *verts_overrid
     /* Convert into a temporary block first because the public converter requires triangle-list input/output blocks. */
     const int at = (int)(out - frame_vertices);
     frame_vertex_count -= (unsigned)n;
+    (void)w3d_citro3d_take_screen();
     const int converted = w3d_citro3d_convert_tris(&current_camera, current_world, &current_state,
                                                    temporary_vertices, n, out, (int)(W3D_C3D_FRAME_VERTEX_CAPACITY - at));
     if (converted < 0) { frame_vertex_count = (unsigned)at; frame_error = converted; return NULL; }
     frame_vertex_count = (unsigned)at + (unsigned)converted;
-    record_batch((unsigned)at, (unsigned)converted);
+    record_batch((unsigned)at, (unsigned)converted, w3d_citro3d_take_screen());
     return out;
 }
 
@@ -303,11 +306,12 @@ const void *w3d_be_tris(const W3dVC *vertices, int n)
     if (!reserve_vertices((unsigned)n, &out)) return NULL;
     const int at = (int)(out - frame_vertices);
     frame_vertex_count -= (unsigned)n;
+    (void)w3d_citro3d_take_screen();
     const int converted = w3d_citro3d_convert_tris(&current_camera, current_world, &current_state, vertices, n, out,
                                                    (int)(W3D_C3D_FRAME_VERTEX_CAPACITY - at));
     if (converted < 0) { frame_vertex_count = (unsigned)at; frame_error = converted; return NULL; }
     frame_vertex_count = (unsigned)at + (unsigned)converted;
-    record_batch((unsigned)at, (unsigned)converted);
+    record_batch((unsigned)at, (unsigned)converted, w3d_citro3d_take_screen());
     return out;
 }
 
@@ -319,7 +323,7 @@ void w3d_be_indexed_again(const W3dMeshView *mesh, const uint8_t *verts_override
     const unsigned at = frame_vertex_count;
     if (!reserve_vertices((unsigned)n, &out)) return;
     memcpy(out, copy, (size_t)n * sizeof(*out));
-    record_batch(at, (unsigned)n);
+    record_batch(at, (unsigned)n, W3D_C3D_SCREEN_UNKNOWN);   /* copies are not re-screened */
 }
 
 void w3d_be_tris_again(const void *copy, int n)
@@ -329,7 +333,7 @@ void w3d_be_tris_again(const void *copy, int n)
     const unsigned at = frame_vertex_count;
     if (!reserve_vertices((unsigned)n, &out)) return;
     memcpy(out, copy, (size_t)n * sizeof(*out));
-    record_batch(at, (unsigned)n);
+    record_batch(at, (unsigned)n, W3D_C3D_SCREEN_UNKNOWN);   /* copies are not re-screened */
 }
 
 void w3d_be_prims(uint32_t vtype, const void *vertices, int n)

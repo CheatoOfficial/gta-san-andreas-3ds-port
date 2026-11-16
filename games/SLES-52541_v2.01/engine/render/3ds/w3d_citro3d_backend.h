@@ -10,6 +10,7 @@ typedef struct {
     int filter, address_u, address_v;
     W3dState state;
     float far_z, fog_z;
+    unsigned screen;            /* W3D_C3D_SCREEN_* of the batch's conversion */
 } W3dC3dBatch;
 
 int w3d_citro3d_init(void);

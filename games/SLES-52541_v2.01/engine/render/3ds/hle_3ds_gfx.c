@@ -2,6 +2,7 @@
 #include <3ds.h>
 #include <citro3d.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -58,7 +59,13 @@
      GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB8) | \
      GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO))
 
-typedef struct { float position[4]; float color[4]; float uv[2]; float fog; } Hle3dsVertex;
+/* view_z feeds the shader's per-batch fog (fog_uniform); UVs are scaled by uv_scale_uniform. World vertices are
+   therefore a plain copy of W3dC3dVertex, whose layout this must keep. */
+typedef struct { float position[4]; float color[4]; float uv[2]; float view_z; } Hle3dsVertex;
+_Static_assert(sizeof(Hle3dsVertex) == sizeof(W3dC3dVertex), "GPU vertex must match converted vertex");
+_Static_assert(offsetof(Hle3dsVertex, color) == offsetof(W3dC3dVertex, color), "colour offset");
+_Static_assert(offsetof(Hle3dsVertex, uv) == offsetof(W3dC3dVertex, uv), "UV offset");
+_Static_assert(offsetof(Hle3dsVertex, view_z) == offsetof(W3dC3dVertex, view_z), "view z offset");
 
 typedef struct { unsigned first, count; } Hle3dsBatchRange;
 typedef struct { unsigned first, count; RndState state; uint8_t lines; } Hle3ds2dBatch;
@@ -72,7 +79,7 @@ static C3D_Mtx display_projection;
 #if HLE_3DS_GPU_CLIP
 static C3D_Mtx world_projection;
 #endif
-static int projection_uniform = -1;
+static int projection_uniform = -1, fog_uniform = -1, uv_scale_uniform = -1;
 static Hle3dsVertex *vertex_buffer;
 static Hle3dsVertex *overlay_vertex_buffer;
 static Hle3dsVertex *sky_vertex_buffer;
@@ -189,6 +196,9 @@ int hle_3ds_gfx_init(void)
     shaderProgramSetVsh(&shader_program, &shader_dvlb->DVLE[0]);
     C3D_BindProgram(&shader_program);
     projection_uniform = shaderInstanceGetUniformLocation(shader_program.vertexShader, "projection");
+    fog_uniform = shaderInstanceGetUniformLocation(shader_program.vertexShader, "fogparams");
+    uv_scale_uniform = shaderInstanceGetUniformLocation(shader_program.vertexShader, "uvscale");
+    if (projection_uniform < 0 || fog_uniform < 0 || uv_scale_uniform < 0) goto fail;
     C3D_AttrInfo *attributes = C3D_GetAttrInfo();
     AttrInfo_Init(attributes);
     AttrInfo_AddLoader(attributes, 0, GPU_FLOAT, 4);
@@ -375,14 +385,18 @@ static int triangle_finite(const W3dC3dVertex v[3])
     return zero == 0.0f;
 }
 
-static inline void write_world_vertex(Hle3dsVertex *o, const float position[4], const W3dC3dVertex *v,
-                                      const W3dC3dBatch *batch, float scale_u, float scale_v)
+/* The shader applies the batch's UV scale and fog, so a world vertex is the converted vertex as is,
+   with the position replaced where the CPU projected or clipped it. */
+static inline void write_world_vertex(Hle3dsVertex *o, const float position[4], const W3dC3dVertex *v)
 {
-    memcpy(o->position, position, sizeof(o->position));
-    memcpy(o->color, v->color, sizeof(o->color));
-    o->uv[0] = v->uv[0] * scale_u;
-    o->uv[1] = v->uv[1] * scale_v;
-    o->fog = hle_3ds_fog_factor(batch->state.fog, v->view_z, batch->far_z, batch->fog_z);
+    memcpy(o, v, sizeof(*o));
+    if (position != v->clip) memcpy(o->position, position, sizeof(o->position));
+}
+
+static void set_batch_uniforms(float fog_a, float fog_b, float scale_u, float scale_v)
+{
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, fog_uniform, fog_a, fog_b, 0.0f, 0.0f);
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, uv_scale_uniform, scale_u, scale_v, 1.0f, 1.0f);
 }
 
 /* 2D state carries blend factors independently of vertex_alpha. */
@@ -468,10 +482,21 @@ void hle_3ds_gfx_present(void)
         unsigned source_end = batch->first_vertex + batch->vertex_count;
         if (source_end > (unsigned)source_count) source_end = (unsigned)source_count;
         const unsigned output_first = (unsigned)output_count;
-        /* Fold the texture's UV scale into the write instead of a second pass over GPU memory. */
-        const Hle3dsTexture *batch_texture = batch->raster ? hle_3ds_texture_get(batch->raster) : NULL;
-        const float scale_u = batch_texture ? batch_texture->uv_scale_u : 1.0f;
-        const float scale_v = batch_texture ? batch_texture->uv_scale_v : 1.0f;
+#if HLE_3DS_GPU_CLIP
+        /* A batch whose conversion saw only finite values, and no vertex behind the near plane when fogged, would
+           take the copy-as-is branch below for every triangle: copy it in one block instead. */
+        if (gpu_batch_copies_as_is(batch->screen, batch->state.fog) && source_end > batch->first_vertex) {
+            const unsigned n = (source_end - batch->first_vertex) / 3u * 3u;
+            if (n <= W3D_C3D_FRAME_VERTEX_CAPACITY - (unsigned)output_count) {
+                memcpy(&vertex_buffer[output_count], &source[batch->first_vertex], (size_t)n * sizeof(*vertex_buffer));
+                output_count += (int)n;
+                drawn_triangles += n / 3u;
+                batch_ranges[b].first = output_first;
+                batch_ranges[b].count = n;
+                continue;
+            }
+        }
+#endif
         for (unsigned i = batch->first_vertex; i + 2u < source_end; i += 3u) {
             const W3dC3dVertex *in = &source[i];
             if (!triangle_finite(in)) { ++dropped_w; continue; }
@@ -482,7 +507,7 @@ void hle_3ds_gfx_present(void)
                                        near_plane_distance(&in[1]), near_plane_distance(&in[2]))) {
                 if (output_count + 3 > W3D_C3D_FRAME_VERTEX_CAPACITY) { ++capacity_dropped_triangles; continue; }
                 for (int j = 0; j < 3; ++j)
-                    write_world_vertex(&vertex_buffer[output_count++], in[j].clip, &in[j], batch, scale_u, scale_v);
+                    write_world_vertex(&vertex_buffer[output_count++], in[j].clip, &in[j]);
                 ++drawn_triangles;
                 continue;
             }
@@ -496,7 +521,7 @@ void hle_3ds_gfx_present(void)
                     !hle_3ds_homogeneous_position(in[1].clip, positions[1]) ||
                     !hle_3ds_homogeneous_position(in[2].clip, positions[2])) { ++dropped_w; continue; }
                 for (int j = 0; j < 3; ++j)
-                    write_world_vertex(&vertex_buffer[output_count++], positions[j], &in[j], batch, scale_u, scale_v);
+                    write_world_vertex(&vertex_buffer[output_count++], positions[j], &in[j]);
                 ++drawn_triangles;
                 continue;
             }
@@ -530,8 +555,7 @@ void hle_3ds_gfx_present(void)
 #else
                     const float *position = positions[j];
 #endif
-                    write_world_vertex(&vertex_buffer[output_count++], position, fan_vertices[j], batch,
-                                       scale_u, scale_v);
+                    write_world_vertex(&vertex_buffer[output_count++], position, fan_vertices[j]);
                 }
                 ++drawn_triangles;
             }
@@ -552,7 +576,7 @@ void hle_3ds_gfx_present(void)
         target->color[3] = colour_255(source_2d->a);
         target->uv[0] = source_2d->u;
         target->uv[1] = source_2d->v;
-        target->fog = 1.0f;
+        target->view_z = 0.0f;
     }
     for (unsigned i = 0; i < overlay_vertex_count; ++i) {
         const RndVtx *source_2d = &overlay_source[i];
@@ -565,7 +589,7 @@ void hle_3ds_gfx_present(void)
         target->color[3] = colour_255(source_2d->a);
         target->uv[0] = source_2d->u;
         target->uv[1] = source_2d->v;
-        target->fog = 1.0f;
+        target->view_z = 0.0f;
     }
 
     C3D_RenderTargetClear(top, C3D_CLEAR_ALL, current_clear_color, 0);
@@ -575,6 +599,7 @@ void hle_3ds_gfx_present(void)
     C3D_BufInfo *buffers = C3D_GetBufInfo();
     C3D_CullFace(GPU_CULL_NONE);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, projection_uniform, &display_projection);
+    set_batch_uniforms(0.0f, 1.0f, 1.0f, 1.0f);              /* 2D passes: no fog, UVs as given */
     C3D_TexEnv *environment = C3D_GetTexEnv(0);
     if (sky_vertex_count && HLE_3DS_SKY_PASS) {
         BufInfo_Init(buffers);
@@ -659,7 +684,6 @@ void hle_3ds_gfx_present(void)
             C3D_TexEnvSrc(environment, C3D_Both, GPU_TEXTURE1, GPU_PRIMARY_COLOR, 0);
             C3D_TexEnvFunc(environment, C3D_Both, GPU_MODULATE);
 #endif
-            /* UVs were already scaled for this texture when the batch's vertices were written. */
         } else {
             C3D_TexBind(1, NULL);
             C3D_TexEnvSrc(environment, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
@@ -672,10 +696,14 @@ void hle_3ds_gfx_present(void)
 #else
         fog_environment(batch->state.fog, batch->state.fog_color);
 #endif
+        float fog_a, fog_b;
+        hle_3ds_fog_linear(batch->state.fog, batch->far_z, batch->fog_z, &fog_a, &fog_b);
+        set_batch_uniforms(fog_a, fog_b, texture ? texture->uv_scale_u : 1.0f, texture ? texture->uv_scale_v : 1.0f);
         C3D_DrawArrays(GPU_TRIANGLES, (int)range.first, (int)range.count);
     }
 
     fog_environment(0, 0);
+    set_batch_uniforms(0.0f, 1.0f, 1.0f, 1.0f);
 #if HLE_3DS_GPU_CLIP
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, projection_uniform, &display_projection);
     C3D_DepthMap(true, -1.0f, 0.0f);
