@@ -288,3 +288,7 @@ SPU2 path costs ~11 ms/frame; output drops ~60% during the unpaced intro and wil
 `docs/3DS_STATUS.md`, "Audio output path in the emulator"). Next: pace or resample audio to real time, or decide the
 audio policy for slow frames. Old mode: the gothic zone-name font is garbled in every compact-profile build checked
 (predates the HUD work; likely the 128x128 compact decode limit on a larger font texture).
+
+Pacing (Claude, 2026-11-17): 3DS release builds now default to x_bootpace=1 and x_pace=2 (real time), profile builds
+keep the deterministic defaults; NDSP queue 96 buffers. See `docs/3DS_STATUS.md`, "Real-time pacing and the audio
+queue". Performance comparisons must use profile builds (or set x_pace=0).

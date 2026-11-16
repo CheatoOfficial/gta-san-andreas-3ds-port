@@ -427,6 +427,25 @@ until the frame rate improves or the audio is paced/stretched to real time. The 
 power-on (no origin, unlike the PSP's boot-relative clock); aligning it with virtual time changed nothing measurable
 here (pacing is not reached in either phase), so that change was not kept - check it if x_pace is enabled.
 
+## Real-time pacing and the audio queue on the 3DS (2026-11-17)
+
+The NDSP queue held 16 x 256 frames; the audio model renders a whole sound-driver update at once, so about half of
+the gameplay audio found no free buffer. With 96 buffers (0.5 s, 96 KiB linear) no gameplay audio was dropped on the
+route (private Azahar with the placeholder DSP component), at ~+1 ms per frame.
+
+The pack's existing pacing (`hle_bootpace.h`, `src/hle_bl.h`) fits the 3DS problems exactly; both were opt-in:
+- `x_bootpace=1`: the loading screens/intro (virtual ~10-40 s) ran at ~2x real time (30 s of virtual time in ~14 s;
+  intro music cut); with it they run at 1x (25 s in 25.6 s), lag forgiven 29-34 s at idle points.
+- `x_pace=2`: in gameplay the 3DS is far below the game's 25 fps, so virtual time, the game clock and the audio model
+  fell behind real time (audio ~30% of real time = mostly silence between bursts). With it, the pack's clock log
+  shows virtual and game millisecond clock at x0.99-1.00 of real time, the in-game clock at 1 game minute per real
+  second, 5.2-6.4 fps in gameplay in Azahar (physics x0.3: the game clamps its timestep at 60 ms), and audio produced
+  at real-time rate (~20% still dropped in Azahar, plausibly its host-paced DSP against the emulated clock; check on
+  hardware).
+Both are now the defaults in 3DS release builds only (profile builds keep 0 so frame timings stay deterministic and
+comparable); `ps2rc.cfg` overrides. Verified in a release build with no cfg: 'config: x_pace=2' and
+'boot pacing: x_bootpace=1' logged, loading at 1x.
+
 ## Known issues from the pre-publication review (2026-11-15)
 
 * Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a
