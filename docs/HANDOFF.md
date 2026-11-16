@@ -1,82 +1,73 @@
 # Codex / Claude Code handoff
 
-Updated 2026-11-15. Read `AGENTS.md` first. This is a source-only handoff; no game-derived files belong in git.
+Updated 2026-11-16. Read `AGENTS.md` first. This is a source-only handoff.
 
-## Current objective and repository state
+## Current state
 
-The user handed the published project back to Codex to fix the game, then return a concrete handoff to Claude.
-The user authorized any suitable latest private conversion/build workspace for local full builds and Azahar runs.
-The repository is public and private vulnerability reporting was verified enabled. This pass changes neither setting.
-Neither model is established as playable. Real hardware, physical controls, audio, saving and sustained gameplay remain unverified.
+Claude merged PR #2 as `e056963` after independent release builds and Old/New Azahar city runs.
+This pass implements the next requested feature on `codex/universal-3ds-runtime`, PR #3: one binary for both consoles.
+The user authorized suitable private conversion/build workspaces for local full builds and emulator checks.
+The repository remains public; no game data, generated game source, binaries, raw logs or captures belong in git.
+LICENSE and NOTICE.md remain identical to upstream `8cd56bb`.
+Neither console is established as playable. Hardware, physical controls, audio and sustained gameplay remain unverified.
+Saving is disabled by the memory-card configuration and filesystem stubs; this pass does not implement saving.
 
-Work branch: `codex/texture-cache-recovery`, based on `20bee84` (the full-build/Azahar update after PR #1).
-The next owner should read this branch's changes and the latest section in `docs/3DS_STATUS.md`, rather than the superseded
-pre-publication handoff. LICENSE and NOTICE.md must remain identical to pinned upstream `8cd56bb`.
+## Changes for review
 
-## Changes in this pass
-
-- Old textures now use RGB565 for opaque, RGBA5551 for cutout and RGBA4 for blended images. World images are bounded
-  to 64 pixels / 8 KiB; HUD copies use a separate tier up to 128 pixels / 32 KiB. Stored smaller levels or point decimation
-  reduce residency before admission. The 2 MiB cache and 8 MiB linear reservation remain unchanged; metadata has 512 slots.
-- New textures retain RGBA8 and their existing level policy. Old decode scratch shrank from 1,052,672 to 69,632 bytes,
-  reducing the tested Old release BSS to about 5.64 MB (the published baseline reported about 6.58 MB).
-- Raster create, destroy, unlock and texture-read hooks now invalidate all matching 3DS cache copies. Dirty snapshots
-  remain alive while current/submitted batches can reference them. New prepares cannot silently reuse a dirty snapshot.
-  After GPU completion, dirty unpinned copies are retired. Header dimensions/format are also checked on cache hits.
-- Fixed the static-budget rejection path in `w3d_citro3d_backend.c`: it formerly reserved the entire remaining vertex
-  buffer before returning for a budget skip, blocking later immediate/lit draws and inflating input counters. It now checks
-  the budget first. Whole-mesh budget omission and real buffer-capacity limits still exist.
-- Fixed fresh-profile startup: staging puts the boot ELF beside discmap.txt at the runtime root, but the loader opened
-  disc/<boot>. An isolated fresh profile reproduced the failure. The loader now opens the staged root file; no manual
-  duplicate boot file in disc/ is needed.
-- Removed first-texel/mean-color diagnostics. The numeric-only log summarizer now accepts strict texture-pressure lines.
-- Updated tests and stale project guidance; no game images, builds, translated sources or raw logs are included.
+- `hle_3ds_heaps.c` overrides libctru's weak pre-main allocator for the auto target. It queries remaining process commit
+  allowance without libc or services, reserves 32 MiB linear only when at least 88 MiB remains, otherwise 8 MiB, and
+  gives normal memory the remainder (capped at 96 MiB). Failed queries/mappings stop startup. It does not guess hardware.
+- After APT identifies hardware, `hle_3ds_profile.c` chooses immutable renderer capacities before allocation. Old hardware
+  always uses compact resources. New hardware uses full resources only with at least 56 MiB normal and 32 MiB linear;
+  otherwise it uses compact resources while retaining New controls. Startup requires 40 MiB normal for compact resources.
+- CPU vertices, batches, overlay arrays, texture slots and decode scratch are allocated for the selected profile. GPU buffers
+  and texture policies preserve PR #2's capacities/formats and deferred invalidation. Shutdown waits for queued GPU work
+  before releasing images/buffers; partial initialization frees allocated storage. Never change profiles with live storage.
+- The default build/staging model is now `auto`, with distinct `ps2rc-3ds-auto-<mode>.3dsx` artifacts and `build-3ds-auto`
+  objects. Forced `old3ds`/`new3ds` targets remain for regressions. Old legacy filenames cannot be mistaken for auto artifacts.
+- `azahar --hardware old3ds|new3ds` selects hardware independently from the artifact target. Auto defaults to New mode.
+  Auto rejects per-model texture budget overrides; use a forced target for those. Explicit static budgets work on all targets.
+- Tests exercise heap alignment/limits, production startup mappings and failure handling, generous Old allowances,
+  low-memory New fallback/controls, both production texture policies in one executable, and artifact selection.
 
 ## Verification
 
-- Eight host executables cover controls, clipping, texture layout, both production texture-cache profiles, both backend
-  capacities and static-budget exhaustion. The production cache tests use synthetic packets and a fake GPU allocator:
-  packing/alpha formats, separate HUD detail, 300 mixed-size resident images under 2 MiB, graceful refusal when all slots
-  are pinned, and deferred invalidation through GPU completion. The budget test fails against the pre-fix production source.
-- Eleven selected Python tests and 6,000 adapter equivalence cases pass; the source/history guard and diff checks pass.
-- Full translated-game New release, Old release and Old profile builds link using ignored private conversion outputs.
-- Final emulator results and remaining limitations are recorded in `docs/3DS_STATUS.md`. The final Old profile includes
-  scripted input and captures; the New check uses a release build. They are correctness checks, not comparable speed benchmarks.
-- Final Old diagnostic captures were inspected locally: player, environment, minimap and HUD text were recognisable.
-  All raw logs/captures remain private. Never paste them into this PR or an issue; use the reviewed numeric summary only.
-- The existing SDK warning in posix_memalign (nonnull argument compared with null) remains; it is unrelated to this pass.
+- Eleven host executables, eleven selected Python tests and 6,000 adapter equivalence cases pass.
+- ARM11 native-source compilation passes for auto and both forced targets. The existing posix_memalign nonnull warning remains.
+- Full translated-game auto profile/release and forced Old/New release builds link in the authorized private workspace.
+  Universal release BSS is 2,061,688 bytes; moving arrays out of BSS does not remove their runtime memory cost.
+- Final same-binary emulator results are in the newest section of `docs/3DS_STATUS.md`. They are scripted diagnostic runs,
+  not normal-controller play or a performance comparison. Both emulator modes were run concurrently on the host.
+- Raw logs and captures remain private. Only reviewed numeric summaries may be shared. Hardware is still untested.
 
 ## Next work for Claude
 
-1. Review and merge this source branch after its CI and latest runtime evidence pass review. Keep the texture/capacity tests.
-   Do not infer whole-game correctness or physical-hardware support from these short emulator runs.
-2. Work toward one binary without regressing New-model quality: renderer arrays/capacities and texture policy currently
-   depend on compile-time model flags, and Old linear-heap size is set before main. A unified build needs runtime-sized
-   renderer storage and a startup allocation policy based on the actual application memory allowance. Old-mode Azahar
-   still grants much more normal heap than a real Old 3DS launch may provide; do not infer hardware model from that alone.
-3. Attribute the slow render_scene/camera_show guest self time, then optimize measured bottlenecks. Do not present
-   reduced drawing or smaller textures as proof of faster full-detail rendering. Skipped meshes still need a distance/priority
-   policy; the static budget is currently draw-order based.
-4. Test real New/Old hardware memory, release-build controls, audio and sustained gameplay. Saving is disabled: the 3DS
-   memory-card configuration returns no card and filesystem operations are stubs, so implement and test save/load support.
-   Track any stale images
-   caused by writes that bypass the raster lifecycle/unlock hooks. The hooks do not prove all guest write paths are covered.
-5. Repeat longer scenes/streaming transitions and inspect HUD/alpha quality with the compact formats. Old cache can reach
-   its 2 MiB cap and capture builds leave little linear headroom. Temporary safe refusals remain possible while textures are busy.
+1. Review PR #3, especially the pre-main allocation policy, immutable-profile assumption, allocation rollback and GPU teardown.
+   Repeat one auto artifact in both hardware modes and check CI before merging. Keep the forced targets for regression checks.
+2. Test real Old/New memory and normal release controls. Old-mode Azahar grants roughly 75 MiB normal heap here; a real
+   Old launch may grant much less. The synthetic 64 MiB total-budget allocator test is not a hardware-fit test. Compact
+   capture runs can have only a few hundred KiB linear headroom; test sustained texture streaming and allocation failures.
+3. Attribute render_scene/camera_show guest self time and optimize measured conversion bottlenecks. Preserve New quality.
+   Static mesh omission is still draw-order based; add a distance/priority policy separately with comparable scene evidence.
+4. Implement and test memory-card save/load support, then validate audio and longer play/streaming. Check texture writes
+   that bypass raster lifecycle/unlock hooks if stale images appear. Keep the full 32 MiB guest address window.
 
-## Reproduction and process ownership
+## Reproduction and ownership
 
-Use your explicitly authorized local conversion outputs, selected via PS2RC3DS_WORK. Keep outputs ignored and private.
+Set PS2RC3DS_WORK to an explicitly authorized private conversion workspace. Do not share cached objects across targets.
 
 ```bash
 python 3ds-port/ps2rc3ds.py test
 bash 3ds-port/scripts/native-checks.sh
-python 3ds-port/ps2rc3ds.py build --model new3ds
+python 3ds-port/ps2rc3ds.py build
+python 3ds-port/ps2rc3ds.py build --mode profile --max-seconds 300
+python 3ds-port/ps2rc3ds.py azahar --hardware old3ds --azahar <PRIVATE_OLD_COPY>
+python 3ds-port/ps2rc3ds.py azahar --hardware new3ds --azahar <PRIVATE_NEW_COPY>
 python 3ds-port/ps2rc3ds.py build --model old3ds
-python 3ds-port/ps2rc3ds.py build --model old3ds --mode profile --max-seconds 300
+python 3ds-port/ps2rc3ds.py build --model new3ds
 ```
 
-Use a separate portable emulator copy/profile for each concurrently tested model. Record the exact executable path,
-PID, start time and artifact hash; stop only that owned PID after verifying its identity. Never stop all Azahar processes.
-Clear or archive prior captures and verify capture timestamps against the run start before using them as evidence.
-Do not restage a running process's data. Real SD staging is outside this pass.
+Staging selects the newest auto artifact, including profile builds; use an explicit release `--3dsx` for controller tests.
+Use separate portable emulator copies/profiles. Record executable path, PID, start time and artifact hash; verify identity
+before stopping only that owned PID. Never stop all Azahar processes or change the everyday profile. Do not restage a
+running process's data. Archive old captures and check timestamps. No real SD staging was performed in this pass.

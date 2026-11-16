@@ -108,6 +108,43 @@ loader searched inside disc/. The loader now follows the staging layout, and bot
 No real hardware was tested. Old-mode Azahar still provides more normal heap than a real Old launch may provide, and the
 capture build's linear headroom is small. These runs establish neither whole-game playability nor hardware compatibility.
 
+## Universal binary (2026-11-16, PR #3)
+
+The default `--model auto` produces one binary with runtime-sized renderer storage. Its pre-main allocator uses the
+remaining process allowance: 32 MiB linear when at least 88 MiB remains, otherwise 8 MiB. APT hardware detection then
+selects compact resources on Old hardware; full resources require New hardware, 56 MiB normal and 32 MiB linear heap.
+A low-memory New launch keeps New controls with compact resources. Insufficient normal heap stops startup. Forced
+Old/New targets remain for regression checks. See [3DS_SETUP.md](3DS_SETUP.md) for artifact names and hardware selection.
+
+Auto profile/release and forced Old/New release builds link. Universal release BSS is 2,061,688 bytes; dynamic renderer
+allocations still consume memory after startup. Eleven host executables, eleven selected Python tests, 6,000 adapter
+cases and ARM11 compilation for all three targets pass. Startup tests exercise the production allocator with fake SVCs,
+including a 64 MiB total / 14 MiB used allowance, query/mapping errors and conservative New fallback.
+
+The exact same final auto diagnostic artifact (SHA-256
+`7635f4c1f2c4a898d81e03ce4a093f94d21dab92ff5d3dd1c37b254c879c4e17`) ran for about 291 seconds in each isolated Azahar
+hardware mode. These concurrent host runs use scripted input and captures; they are correctness observations, not
+comparable performance benchmarks or normal-controller tests.
+
+| Observation | Old mode | New mode |
+|---|---:|---:|
+| Selected resources | compact | full |
+| Normal / linear heap (KiB) | 76,768 / 8,192 | 80,864 / 32,768 |
+| Periodic frame records / last sampled frame | 28 / 1,920 | 26 / 1,680 |
+| Maximum sampled texture omissions | 0 | 0 |
+| Maximum sampled skipped meshes | 153 | 0 |
+| Last sampled cumulative decode failures | 0 | 0 |
+| Last sampled cache / peak (KiB) | 1,986 / 2,048 | 13,341 / 13,341 |
+| Minimum sampled free linear memory (KiB) | 219 | 7,342 |
+| Fatal/abort/crash/panic entries in guest log | 0 | 0 |
+
+Fresh captures through frame 1,720 were inspected privately in both modes: the player, city, minimap and HUD render.
+Old geometry omission and detail loss remain visible. Its smaller static draw budget is preserved; zero texture omissions
+does not mean full scene coverage. Old-mode Azahar provides a generous normal heap; the allocator fixture and emulator
+runs do not prove the complete runtime fits a real Old launch. Compact capture runs have very little linear headroom.
+No game captures, raw logs, generated sources or executables are included here. Real hardware, controls, audio, saving
+and sustained gameplay remain unfinished.
+
 ## Known issues from the pre-publication review (2026-11-15)
 
 * Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a
@@ -127,7 +164,7 @@ capture build's linear headroom is small. These runs establish neither whole-gam
 
 ## Open work (good first contributions)
 
-Complete the Old-model acceptance checks and the publication checks in [HANDOFF.md](HANDOFF.md) before claiming compatibility.
+Complete the Old-model acceptance checks and current review in [HANDOFF.md](HANDOFF.md) before claiming compatibility.
 
 1. **Get a hardware profile log** ([3DS_HARDWARE_TEST.md](3DS_HARDWARE_TEST.md)). It decides what comes next.
 2. Attribute the `render_scene` / `camera_show` self time (add profiler zones around the HLE hooks, flush, state and
