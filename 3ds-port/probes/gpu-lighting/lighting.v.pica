@@ -1,0 +1,61 @@
+.fvec projection[4]
+.fvec direction[4]
+.fvec lightcolour[4]
+.fvec material
+.fvec base
+.fvec options
+.constf k(0.0, 255.0, 0.5, 0.00392156862745098)
+.out outpos position
+.out outclr color
+.alias inpos v0
+.alias normal v1
+.proc main
+ dp4 outpos.x, projection[0], inpos
+ dp4 outpos.y, projection[1], inpos
+ dp4 outpos.z, projection[2], inpos
+ dp4 outpos.w, projection[3], inpos
+ dp3 r1.x, normal, normal
+ cmp k.xx, lt, lt, r1.xx
+ ifc cmp.x
+  rsq r1.x, r1.x
+ .else
+  mov r1.x, k.x
+ .end
+ mov r4.xyz, base
+ dp3 r2.x, direction[0], normal
+ mul r2.x, r2.x, r1.x
+ max r2.x, k.x, r2.x
+ mul r2.x, options.x, r2.x
+ mul r3.xyz, material, r2.xxx
+ mul r3.xyz, lightcolour[0], r3
+ add r4.xyz, r4, r3
+ dp3 r2.x, direction[1], normal
+ mul r2.x, r2.x, r1.x
+ max r2.x, k.x, r2.x
+ mul r2.x, options.x, r2.x
+ mul r3.xyz, material, r2.xxx
+ mul r3.xyz, lightcolour[1], r3
+ add r4.xyz, r4, r3
+ dp3 r2.x, direction[2], normal
+ mul r2.x, r2.x, r1.x
+ max r2.x, k.x, r2.x
+ mul r2.x, options.x, r2.x
+ mul r3.xyz, material, r2.xxx
+ mul r3.xyz, lightcolour[2], r3
+ add r4.xyz, r4, r3
+ dp3 r2.x, direction[3], normal
+ mul r2.x, r2.x, r1.x
+ max r2.x, k.x, r2.x
+ mul r2.x, options.x, r2.x
+ mul r3.xyz, material, r2.xxx
+ mul r3.xyz, lightcolour[3], r3
+ add r4.xyz, r4, r3
+ mul r4.xyz, k.y, r4
+ add r4.xyz, k.z, r4
+ flr r4.xyz, r4
+ max r4.xyz, k.x, r4
+ min r4.xyz, k.y, r4
+ mul outclr.xyz, k.w, r4
+ mov outclr.w, options.y
+ end
+.end

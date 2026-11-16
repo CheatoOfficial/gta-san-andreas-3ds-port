@@ -4,10 +4,10 @@ Updated 2026-11-16. Read `AGENTS.md` first. This is a source-only handoff.
 
 ## Current state
 
-Claude merged PR #2 as `e056963` after independent release builds and Old/New Azahar city runs.
-PR #3 (universal runtime) is merged as `6fed0a1`. PR #4 (`claude/present-fast-path`) is the open performance base.
-Then `codex/lit-call-preparation`, PR #5, stacked on PR #4; Claude reviewed it (no defect found).
-Current continuation: `claude/gpu-clip-prototype`, PR #6, stacked on PR #5 (switch off by default).
+PRs #1-#7 are merged; `main` is `39a9571` (GPU clipping with the PR #7 fog fallback, switch still off by default).
+Current continuation: `claude/shader-fog-uv`, based on Codex's local `codex/gpu-lighting-probe` docs commits
+(`a1f27e1`..`a34b35d`, never pushed separately). It moves world fog/UV scale into the shader and adds Codex's
+game-free GPU lighting probe. See "Claude: shader-side fog and UV scale" at the end.
 The user authorized suitable private conversion/build workspaces for local full builds and emulator checks.
 The repository remains public; no game data, generated game source, binaries, raw logs or captures belong in git.
 LICENSE and NOTICE.md remain identical to upstream `8cd56bb`.
@@ -45,9 +45,7 @@ Saving is disabled by the memory-card configuration and filesystem stubs; this p
 
 ## Next work for Claude
 
-1. Review PR #7 and incorporate the fog correction into PR #6 before considering default enablement.
-   Land #4 then #5, retarget/review #6 with the correction, and keep GPU clipping off pending its remaining checks.
-   Check current CI and retain the lighting/fog regressions and forced model targets.
+1. (Done: #4-#7 landed.) Next renderer step is zero-copy world vertices; see the last Claude section.
 2. Test real Old/New memory and normal release controls. Old-mode Azahar grants roughly 75 MiB normal heap here; a real
    Old launch may grant much less. The synthetic 64 MiB total-budget allocator test is not a hardware-fit test. Compact
    capture runs can have only a few hundred KiB linear headroom; test sustained texture streaming and allocation failures.
@@ -218,3 +216,29 @@ Do not merge 2bf848b. The original hardware-test release hash/package remain unc
 candidate nor the parked long-strip change solves the measured lighting bottleneck. Prefer a larger,
 switchable GPU transform/lighting approach with independent correctness probes over additional speculative
 normal-loop tweaks. Hardware results and physical controls/audio are still pending the user's console.
+
+
+## Claude: shader-side fog and UV scale (2026-11-16, branch claude/shader-fog-uv)
+
+Continued while Codex was out of usage. Codex's GPU lighting probe (`3ds-port/probes/gpu-lighting`, game-free,
+committed here unchanged) ran in the private Azahar: 64 of 64 cases exact (`max_channel_delta=0`). Azahar only.
+
+Measured before choosing the next step (private, deterministic route, New mode, GPU clip on, busiest window):
+- Skipping directional lighting on lit vertices only: lit conversion 124.6 -> 94.5 ms. So GPU lighting saves at most
+  ~30 ms of a ~337 ms frame; the other ~94 ms is decode, skinning and transform.
+- Present submit (72.1 ms) splits into world vertex loop 55.5, world state/draws for ~600 batches 14.3, rest small.
+  A plain-memcpy experiment still cost ~44 ms in the loop: the copy itself is the cost.
+- `mul255` division-free form: ~0.3 ms (most draws skip it). Not committed.
+- `hle.memtrap` (~22 ms/iteration): all hardware-register class; it is D8 (scratchpad->RAM) DMA registers and D_STAT,
+  ~730 kicks per iteration. Likely includes interrupt work at those safe points. No cheap fix found.
+
+Committed: world fog and UV scale in the vertex shader (numbers in `docs/3DS_STATUS.md`, "Shader-side fog and UV scale").
+The GPU vertex layout now equals `W3dC3dVertex` (compile-time asserts), which is the precondition for:
+
+Next (not started): zero-copy world vertices for the full profile with GPU clipping. Make `frame_vertices` two
+linear buffers (8.25 MiB each at 196,608 vertices; fits the 32 MiB full-profile linear heap, not compact) swapped per
+present, and have conversion flag each batch whose vertices include a non-finite value or (fogged batches) a vertex
+behind the near plane. Draw clean batches straight from the conversion buffer; send flagged batches through the
+existing copy/clip loop into `vertex_buffer` and draw them in their original order (switching BufInfo). Flush the
+data cache for the written range before submission (Azahar does not model caches, so this is a hardware-only bug if
+missed). Expected: most of the 55.5 ms loop. Compact keeps the copy path.
