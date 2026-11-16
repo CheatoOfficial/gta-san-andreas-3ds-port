@@ -6,7 +6,8 @@ Updated 2026-11-16. Read `AGENTS.md` first. This is a source-only handoff.
 
 Claude merged PR #2 as `e056963` after independent release builds and Old/New Azahar city runs.
 PR #3 (universal runtime) is merged as `6fed0a1`. PR #4 (`claude/present-fast-path`) is the open performance base.
-Current continuation: `codex/lit-call-preparation`, PR #5, stacked on PR #4.
+Then `codex/lit-call-preparation`, PR #5, stacked on PR #4; Claude reviewed it (no defect found).
+Current continuation: `claude/gpu-clip-prototype`, PR #6, stacked on PR #5 (switch off by default).
 The user authorized suitable private conversion/build workspaces for local full builds and emulator checks.
 The repository remains public; no game data, generated game source, binaries, raw logs or captures belong in git.
 LICENSE and NOTICE.md remain identical to upstream `8cd56bb`.
@@ -97,6 +98,25 @@ The next larger performance step remains a switchable GPU transform/clip prototy
 no production GPU transform was attempted here. Material constants are now prepared, but per-vertex normalisation,
 skinning, transforms, clip checks and strip expansion remain on the CPU. Saving, audio, normal controls, sustained play
 and hardware memory/performance still need work. Preserve private process identity checks during any emulator reruns.
+
+## Claude: GPU near-clip prototype (PR #6, stacked on PR #5)
+
+Claude reviewed PR #5 (same expression order, debug/null-light paths unchanged; full tests pass; the adapter
+equivalence rounding count is identical to PR #4's: 537,190). Merging #4/#5 was blocked by Claude's permission mode,
+so the user merges them.
+
+`claude/gpu-clip-prototype` adds `HLE_3DS_GPU_CLIP` (default 0): world vertices go to PICA as raw clip coordinates and
+the GPU does the near clip. In Azahar it cut present-pass time ~54% in both modes with near-identical captures,
+including a frame with 11 near-plane crossings (numbers in `docs/3DS_STATUS.md`). Before making it the default:
+review the depth/clip derivation in `hle_3ds_homogeneous.h`, and accept that beyond-far geometry is clipped, not
+clamped. Real PICA clipping behaviour still needs hardware evidence.
+
+Next steps, in order of measured cost on the busy window (~337 ms/frame with the switch on):
+1. Lit conversion (~125 ms, ~1.4 us per output vertex): normalisation, skinning and strip expansion on the CPU.
+   Candidates: compute lighting in the vertex shader from object-space normals, or cache per-input-vertex results.
+2. Present pass (~67 ms): make it zero-copy. The adapter could write `Hle3dsVertex` straight into a double-buffered
+   linear buffer, with fog and UV scale as per-batch shader uniforms. Linear memory is tight on Old (8 MiB).
+3. Game-side time between presents not explained by conversion (~120 ms).
 
 ## Reproduction and ownership
 

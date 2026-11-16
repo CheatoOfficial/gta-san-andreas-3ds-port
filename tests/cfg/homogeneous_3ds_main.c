@@ -45,5 +45,27 @@ int main(void) {
     assert(closef(2*bottom[1]/(240*bottom[3])-1,-1));
     float out[4]; const float zero[]={0,0,0,0}, nanv[]={NAN,0,0,1}, huge[]={3.4e38f,0,0,1};
     assert(!hle_3ds_homogeneous_position(zero,out)); assert(!hle_3ds_homogeneous_position(nanv,out)); assert(!hle_3ds_homogeneous_position(huge,out));
-    puts("homogeneous mapping, full depth chain, depth state, perspective interpolation and 2D passed");
+    /* GPU-clip rows: same X/Y/W as the CPU path, depth flipped so GE near is OrthoTilt clip z = 0. */
+    float rows[4][4]; hle_3ds_gpu_clip_rows(rows);
+    for (unsigned i=0; i<sizeof(inputs)/sizeof(inputs[0]); ++i) {
+        const float *c=inputs[i]; float o[4], g[4]; assert(hle_3ds_homogeneous_position(c,o));
+        for (int r=0;r<4;++r) g[r]=rows[r][0]*c[0]+rows[r][1]*c[1]+rows[r][2]*c[2]+rows[r][3]*c[3];
+        assert(closef(g[0],o[0]) && closef(g[1],o[1]) && g[3]==o[3]);
+        const float ortho_z = g[2] - g[3];            /* OrthoTilt(0..1, left-handed) row 2 */
+        const float gpu_depth = ortho_z / g[3] + 1.0f;  /* DepthMap(1, 1) */
+        if (c[2] >= -c[3] && c[2] <= c[3]) {            /* inside GE depth range: same window depth */
+            assert(ortho_z <= 0.0001f && ortho_z >= -g[3] - 0.0001f);
+            assert(closef(gpu_depth, -(o[2]-o[3])/o[3]));
+        }
+    }
+    for (int i=0; i<3; ++i) { /* GE near, middle, far */
+        const float clip[]={0,0,(float)(i-1)*2,2}; float g[4];
+        for (int r=0;r<4;++r) g[r]=rows[r][0]*clip[0]+rows[r][1]*clip[1]+rows[r][2]*clip[2]+rows[r][3]*clip[3];
+        assert(closef((g[2]-g[3])/g[3]+1.0f, depth[i]));
+        if (i == 0) assert(closef(g[2]-g[3], 0)); /* near plane is the PICA z = 0 clip plane */
+    }
+    const float behind[]={0,0,-3,2}; float gb[4]; /* in front of GE near: rejected by z' <= 0 */
+    for (int r=0;r<4;++r) gb[r]=rows[r][0]*behind[0]+rows[r][1]*behind[1]+rows[r][2]*behind[2]+rows[r][3]*behind[3];
+    assert(gb[2]-gb[3] > 0);
+    puts("homogeneous mapping, full depth chain, depth state, perspective interpolation, 2D and GPU-clip rows passed");
 }

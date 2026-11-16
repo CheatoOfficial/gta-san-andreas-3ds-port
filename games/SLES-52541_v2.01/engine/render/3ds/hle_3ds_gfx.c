@@ -42,6 +42,10 @@
 #ifndef HLE_3DS_CAPTURE_INTERVAL
 #define HLE_3DS_CAPTURE_INTERVAL 120u
 #endif
+/* Prototype: let PICA near-clip raw GE clip coordinates instead of clipping and scaling them on the CPU. */
+#ifndef HLE_3DS_GPU_CLIP
+#define HLE_3DS_GPU_CLIP 0
+#endif
 #ifndef HLE_3DS_CMDBUF_SIZE
 #define HLE_3DS_CMDBUF_SIZE (C3D_DEFAULT_CMDBUF_SIZE * 4u)
 #endif
@@ -64,6 +68,9 @@ static int fog_ramp_ready;
 static DVLB_s *shader_dvlb;
 static shaderProgram_s shader_program;
 static C3D_Mtx display_projection;
+#if HLE_3DS_GPU_CLIP
+static C3D_Mtx world_projection;
+#endif
 static int projection_uniform = -1;
 static Hle3dsVertex *vertex_buffer;
 static Hle3dsVertex *overlay_vertex_buffer;
@@ -212,6 +219,22 @@ int hle_3ds_gfx_init(void)
     C3D_TexEnvSrc(environment, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
     C3D_TexEnvFunc(environment, C3D_Both, GPU_REPLACE);
     Mtx_OrthoTilt(&display_projection, 0.0f, 400.0f, 0.0f, 240.0f, 0.0f, 1.0f, true);
+#if HLE_3DS_GPU_CLIP
+    {
+        float rows[4][4];
+        C3D_Mtx clip_to_screen;
+        hle_3ds_gpu_clip_rows(rows);
+        Mtx_Zeros(&clip_to_screen);
+        for (int r = 0; r < 4; ++r) {
+            clip_to_screen.r[r].x = rows[r][0];
+            clip_to_screen.r[r].y = rows[r][1];
+            clip_to_screen.r[r].z = rows[r][2];
+            clip_to_screen.r[r].w = rows[r][3];
+        }
+        Mtx_Multiply(&world_projection, &display_projection, &clip_to_screen);
+        LOG("Citro3D GPU clip prototype enabled\n");
+    }
+#endif
     gfx_ready = 1;
     w3d_citro3d_frame_reset();
     return 1;
@@ -489,6 +512,17 @@ void hle_3ds_gfx_present(void)
         const Hle3dsTexture *batch_texture = batch->raster ? hle_3ds_texture_get(batch->raster) : NULL;
         const float scale_u = batch_texture ? batch_texture->uv_scale_u : 1.0f;
         const float scale_v = batch_texture ? batch_texture->uv_scale_v : 1.0f;
+#if HLE_3DS_GPU_CLIP
+        /* PICA clips against the GE near plane (see hle_3ds_gpu_clip_rows); only reject non-finite input. */
+        for (unsigned i = batch->first_vertex; i + 2u < source_end; i += 3u) {
+            const W3dC3dVertex *in = &source[i];
+            if (!triangle_finite(in)) { ++dropped_w; continue; }
+            if (output_count + 3 > W3D_C3D_FRAME_VERTEX_CAPACITY) { ++capacity_dropped_triangles; continue; }
+            for (int j = 0; j < 3; ++j)
+                write_world_vertex(&vertex_buffer[output_count++], in[j].clip, &in[j], batch, scale_u, scale_v);
+            ++drawn_triangles;
+        }
+#else
         for (unsigned i = batch->first_vertex; i + 2u < source_end; i += 3u) {
             const W3dC3dVertex *in = &source[i];
             if (!triangle_finite(in)) { ++dropped_w; continue; }
@@ -534,6 +568,7 @@ void hle_3ds_gfx_present(void)
                 ++drawn_triangles;
             }
         }
+#endif
         batch_ranges[b].first = output_first;
         batch_ranges[b].count = (unsigned)output_count - output_first;
     }
@@ -598,6 +633,10 @@ void hle_3ds_gfx_present(void)
     /* Init/Add mutate the descriptor; Set marks the new binding dirty after
        the preceding draw consumed GetBufInfo's original dirty flag. */
     C3D_SetBufInfo(buffers);
+#if HLE_3DS_GPU_CLIP
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, projection_uniform, &world_projection);
+    C3D_DepthMap(true, 1.0f, 1.0f);
+#endif
     for (int b = 0; b < batch_count; ++b) {
         const W3dC3dBatch *batch = &batches[b];
         const Hle3dsBatchRange range = batch_ranges[b];
@@ -670,6 +709,10 @@ void hle_3ds_gfx_present(void)
     }
 
     fog_environment(0, 0);
+#if HLE_3DS_GPU_CLIP
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, projection_uniform, &display_projection);
+    C3D_DepthMap(true, -1.0f, 0.0f);
+#endif
     C3D_CullFace(GPU_CULL_NONE);
     C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_COLOR);
     C3D_AlphaTest(false, GPU_GREATER, 0);

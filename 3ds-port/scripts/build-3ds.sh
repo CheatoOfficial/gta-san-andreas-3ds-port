@@ -62,6 +62,8 @@ if [ "$MODEL" = old3ds ] && { [ "$TEXTURE_BUDGET_KB" -gt 2048 ] || [ "$TEXTURE_S
   echo "Old 3DS profile supports at most 2048 KiB textures and 512 slots" >&2; exit 1
 fi
 DEFS="-DHLE_3DS_AUTO_MODEL=$AUTO_MODEL -DHLE_3DS_OLD_MODEL=$OLD_MODEL -DHLE_3DS_SKY_PASS=${HLE_3DS_SKY_PASS:-1}"
+# Experimental: HLE_3DS_GPU_CLIP=1 lets PICA near-clip world triangles (see hle_3ds_gpu_clip_rows). Off by default.
+DEFS="$DEFS -DHLE_3DS_GPU_CLIP=${HLE_3DS_GPU_CLIP:-0}"
 if [ "$MODEL" = auto ]; then
   if [ -n "${HLE_3DS_TEXTURE_SLOTS+x}${HLE_3DS_TEXTURE_BUDGET_KB+x}" ]; then
     echo "Per-model texture overrides require --model old3ds or new3ds" >&2; exit 1

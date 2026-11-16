@@ -208,6 +208,31 @@ meshes sampled); it remains tight on linear memory. Its fresh frame-1,720 captur
 the player, city, minimap and HUD. This is a regression check, not a matched Old-mode speed comparison. No hardware,
 physical controls, audible output, saving or sustained gameplay was validated.
 
+## GPU near-clip prototype (2026-11-16, build switch, off by default)
+
+`HLE_3DS_GPU_CLIP=1 python 3ds-port/ps2rc3ds.py build ...` hands raw GE clip coordinates to the vertex shader instead of
+near-clipping and scaling each triangle on the CPU. A fixed matrix (`hle_3ds_gpu_clip_rows`, composed with the existing
+OrthoTilt) keeps X/Y/W identical and flips depth so the GE near plane becomes OrthoTilt clip z = 0, which PICA clips;
+`C3D_DepthMap(true, 1, 1)` for the world pass restores GE reversed depth (near 1, far 0), and the sky/2D passes keep
+the old mapping. The present pass is now a finite check and a copy per triangle. Known difference: geometry beyond the
+GE far plane is clipped by the GPU instead of depth-clamped. Host tests check the mapping against the CPU path.
+
+Same deterministic profile route as above, private Azahar profile, switch off vs on (PR #5 code otherwise):
+
+| Window (static + lit vertices) | Submit, New, off | Submit, New, on | Submit, Old, off | Submit, Old, on |
+|---|---:|---:|---:|---:|
+| 109,796 / 65,244 (Old) | 146.0 ms | 67.3 ms | 87.7 ms | 40.8 ms |
+| 73,288 / 56,011 (Old) | 99.3 ms | 46.6 ms | 75.3 ms | 34.9 ms |
+| 65,201 / 47,249 (Old) | 88.6 ms | 41.1 ms | 65.3 ms | 30.7 ms |
+| 45,060 / 32,224 (Old) | 62.0 ms | 29.2 ms | 44.7 ms | 21.0 ms |
+
+About 54% less present-pass time in both modes (~0.61 ms per 1,000 vertices). Vertex counts per window and the other
+timers were identical between builds. Four route captures (frames 1,360-1,720) differed from the CPU path in at most 3
+pixels by at most 12 levels; four more around frame 1,920, where the CPU path near-clipped 11 triangles, differed in at
+most 6 pixels by 1 level. Both modes: 28 periodic frame lines, 0 texture omissions, 0 adapter errors, no fatal entries;
+Old kept its existing geometry budget skips. The busiest window is still ~337 ms per frame; lit conversion (125 ms) is
+now the largest renderer cost. Azahar only: real PICA clipping/precision is unverified.
+
 ## Known issues from the pre-publication review (2026-11-15)
 
 * Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a
