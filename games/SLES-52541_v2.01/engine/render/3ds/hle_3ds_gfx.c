@@ -807,6 +807,7 @@ void hle_3ds_gfx_present(void)
                 (double)ct[0] * ms, (unsigned long long)(cv[0] / 120u), (unsigned long long)(cc[0] / 120u),
                 (double)ct[1] * ms, (unsigned long long)(cv[1] / 120u), (unsigned long long)(cc[1] / 120u));
             LOG("Citro3D budget skips (120 frames, per frame): %u static meshes\n", w3d_citro3d_budget_skipped() / 120u);
+            w3d_citro3d_log_static_cut(120u);
             hle_plat_log_flush();
             acc_wait = acc_submit = acc_end = acc_gap = 0; acc_n = 0;
         }

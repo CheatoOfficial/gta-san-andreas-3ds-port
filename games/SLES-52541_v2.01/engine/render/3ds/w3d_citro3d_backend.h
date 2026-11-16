@@ -23,6 +23,7 @@ int w3d_citro3d_frame_batch_count(void);
 int w3d_citro3d_frame_error(void);
 unsigned w3d_citro3d_budget_skipped(void);
 void w3d_citro3d_take_conv_stats(uint64_t ticks[2], uint64_t verts[2], uint64_t calls[2]);
+void w3d_citro3d_log_static_cut(unsigned frames);    /* logs and resets the static distance-cut counters */
 unsigned w3d_citro3d_frame_textures_skipped(void);
 unsigned w3d_citro3d_frame_states_simplified(void);
 unsigned w3d_citro3d_frame_segments_skipped(void);
