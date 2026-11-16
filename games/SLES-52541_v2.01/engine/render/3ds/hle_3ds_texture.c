@@ -100,7 +100,9 @@ static int raster_info(uint32_t raster, RasterInfo *info, int *error, int overla
     if (!result) result = tc_ps2_inspect(&info->source, &info->decoded);
     if (!result) {
         tc_policy_default(&info->policy);
-        info->policy.max_dim = HLE_3DS_COMPACT ? (overlay ? 128 : 64) : 512;
+        /* Compact 2D textures up to 256 px: the HUD/menu fonts are 256 px atlases, and halving them garbled the
+           gothic zone and vehicle names. World textures stay at 64 px. */
+        info->policy.max_dim = HLE_3DS_COMPACT ? (overlay ? 256 : 64) : 512;
         info->policy.max_levels = 1;
         info->policy.cache_bytes = 0;
         info->policy.swizzle = 0;       /* expand a simple linear intermediate to RGBA8 below */
@@ -111,7 +113,7 @@ static int raster_info(uint32_t raster, RasterInfo *info, int *error, int overla
         /* Admit smaller complete images rather than spending the entire cache on a few large rasters.
            Keep 2D atlases separately so the world policy cannot force HUD text to world resolution. */
         if (HLE_3DS_COMPACT) {
-            const size_t limit = overlay ? 32768u : 8192u;
+            const size_t limit = overlay ? 131072u : 8192u;
             while (!result && (size_t)next_power_of_two(info->plan.level[0].width) *
                      next_power_of_two(info->plan.level[0].height) * 2u > limit && info->policy.max_dim > 8) {
                 info->policy.max_dim /= 2;

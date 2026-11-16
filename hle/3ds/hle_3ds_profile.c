@@ -10,7 +10,7 @@ static const Hle3dsProfile compact_profile = {
     .frame_vertices = 65536, .temp_vertices = 8192, .batches = 2048,
     .overlay_vertices = 4096, .overlay_batches = 512,
     .texture_slots = 512, .texture_bytes = 2u * HLE_3DS_MIB,
-    .decode_bytes = 128u * 128u * 4u + 4096u,
+    .decode_bytes = 256u * 256u * 4u + 4096u,     /* 256 px 2D textures (fonts); was 128 px */
     .static_budget = 10000, .min_heap = 40u * HLE_3DS_MIB
 };
 static const Hle3dsProfile full_profile = {
