@@ -325,7 +325,7 @@ static void queue_2d(const RndVtx *vertices, int count, const RndState *state, i
     batch->first = overlay_vertex_count;
     batch->state = *state;
     batch->lines = 0;
-    if (hle_hud_screen && !bottom_active) enable_bottom();
+    if (hle_hud_screen && !bottom_active) enable_bottom();   /* (normally taken at the game's first frame) */
     batch->screen = (uint8_t)(bottom_active && hle_hud_screen);
     batch->radar = (uint8_t)(batch->screen && hle_hud_group == HLE_HUD_GROUP_RADAR);   /* clipped to its panel */
     if (hle_hud_group >= 0) {                                   /* per-group guest bounds (layout diagnostics) */
@@ -929,11 +929,14 @@ void hle_3ds_gfx_present(void)
             present_count, overlay_batch_count, overlay_vertex_count, overlay_dropped_vertices,
             overlay_texture_omissions, overlay_feedback_skipped, overlay_screen_width, overlay_screen_height);
     }
+    /* The dual-screen layout takes the bottom screen once the game draws (boot messages stay readable until then),
+       so intro movies and cutscenes leave it black like the showcase rather than showing the console. */
+    if (!bottom_active && (input_triangles || overlay_batch_count) && hle_hud_bottom_layout()) enable_bottom();
     const int capture_due = HLE_3DS_CAPTURE_START_FRAME
         ? (present_count >= HLE_3DS_CAPTURE_START_FRAME &&
            (present_count - HLE_3DS_CAPTURE_START_FRAME) % HLE_3DS_CAPTURE_INTERVAL == 0)
         : (capture_count == 0 || present_count % HLE_3DS_CAPTURE_INTERVAL == 0);
-    if (input_triangles && capture_count < HLE_3DS_CAPTURE_MAX && capture_due) {
+    if ((input_triangles || overlay_batch_count) && capture_count < HLE_3DS_CAPTURE_MAX && capture_due) {
         save_debug_frame(present_count);
     }
     overlay_vertex_count = overlay_batch_count = overlay_dropped_vertices = overlay_texture_omissions = overlay_feedback_skipped = 0;

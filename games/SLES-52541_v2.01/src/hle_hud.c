@@ -167,6 +167,9 @@ int hle_hud_bottom_layout(void)
 static void hud_call(R5900Ctx *c, uint32_t target, int g)
 {
     if (!ready) hud_init();
+#ifdef HLE_3DS
+    if (g == G_TR && !depth) opt_bottom = word("hud_layout", "bottom", "classic", 1);   /* settings menu: live */
+#endif
     const int bottom = opt_bottom && bottom_group(g);
     if ((!opt_fix && !bottom) || depth) { rc_dispatch(c, target); return; }
     depth++;

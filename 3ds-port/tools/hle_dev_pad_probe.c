@@ -57,6 +57,10 @@ static const ProbeEvent events[] = {
     { 90000, 100000, UP | CROSS, 0, -127 },
     { 100000, 104000, UP, 110, -60 },
     { 104000, 120000, UP | CROSS, 0, -127 },
+    /* After the measured route: open the pause menu, stay 6 s, resume (both-screen HUD transition check). */
+    { 121000, 121300, START, 0, 0 },
+    { 127000, 127300, START, 0, 0 },
+    { 128000, 132000, UP, 0, -127 },
 };
 #undef SKIP_PROMPT_AT
 #endif
