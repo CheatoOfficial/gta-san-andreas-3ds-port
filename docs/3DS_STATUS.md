@@ -380,6 +380,72 @@ clock, money, health; live clock and money updates), intro cutscene at frame 1,0
 ammo, armour, breath and wanted-level placement (the route never shows them; their placements are estimates until
 their logged bounds are observed), Old mode, hardware. Azahar only.
 
+## GPU transform and lighting for lit meshes (2026-11-17, `HLE_3DS_GPU_LIGHT=1`, needs `HLE_3DS_GPU_CLIP=1`)
+
+Where the lit time goes (private, New mode, busiest window, 89,706 lit output / 44,170 input vertices per frame, all
+strips, 43% skinned at ~1.6 bones): removing one stage at a time from 130.5 ms (with counters) saved decode 21.9 ms,
+skinning 21.5 ms, `convert_vertex` (camera/world transform, UV, colour) 25.8 ms; directional lighting was ~30 ms.
+No single CPU stage dominates, so the transform and lighting moved to the vertex shader.
+
+How: lit meshes write the skinned object-space position into the position slot and the object-space normal into
+the colour slot (same 44-byte vertex, same present path and bulk copy); the backend keeps a `W3dGpuLight` per batch
+(world matrix, camera projection, the adapter's prepared lit terms and the material step of `apply_simple_light`).
+The shader (bool `litmode`) multiplies by screen x camera x world, computes view z for fog, normalises the world
+normal, evaluates the same lit formula with byte rounding (Codex's probe: 64/64 exact in Azahar) and the material
+step. The conversion screen also runs on GPU-lit vertices (near plane through camera x world): a call with a
+non-finite value, or a fogged vertex behind the near plane, is redone on the CPU path. Decode and skinning are shared
+with the CPU path (`lit_decode`), whose arithmetic is unchanged (6,000 adapter cases still bit-exact).
+
+| Window (vertices) | Lit ms, CPU | Lit ms, GPU light | Between presents, CPU | GPU light | Submit, CPU | GPU light |
+|---|---:|---:|---:|---:|---:|---:|
+| 109,576 | 127.8 | 85.7 | 265.7 | 223.5 | 32.1 | 34.4 |
+| 72,910 | 69.7 | 44.6 | 182.4 | 157.3 | 24.1 | 25.2 |
+| 70,777 | 75.3 | 51.8 | 201.9 | 178.5 | 21.6 | 22.8 |
+| 64,283 | 63.8 | 43.2 | 187.8 | 167.2 | 20.0 | 21.1 |
+
+The busiest window's frame (between presents + wait + submit) goes from ~306 to ~266 ms (-13%); uniform uploads add
+~1-2 ms of submit. 0 CPU fallbacks on the route. Captures against the same build with CPU lighting: frames
+1,360-1,720 differ in at most 3 pixels by at most 2 levels; frames 1,900-1,930 (11 near clips at 1,920) in at most 6
+pixels by 1 level; bottom screens identical. A first build ended the lighting procedure with END, which stops the
+whole PICA shader (a called procedure returns after its last instruction): lit objects came out flat fog colour.
+Off by default with GPU clipping; Old mode and hardware not yet checked.
+
+## Audio output path in the emulator (2026-11-17, diagnostics only)
+
+NDSP's `0xd880a7fa` in Azahar is the missing DSP component: libctru reads `sdmc:/3ds/dspfirm.cdc` (normally dumped from
+the console with DSP1). With a 1 KiB placeholder file (zeros and the "DSP1" magic; created only in the private
+emulator profile, not distributable firmware) Azahar's HLE DSP accepts it, NDSP initialises and the full SPU2
+decode/mix path runs instead of the state-only model: about +11 ms per frame (`hle.audio` ~11 ms per iteration),
+so all earlier emulator timings exclude audio mixing that a console with the component pays.
+
+`audio_3ds.c` now logs the NDSP queue every 10 s of produced audio. NDSP consumes in real time (~48 k frames per
+second of system time) and never stalls, but production follows virtual time: before the first main-loop iteration
+(intro, logos, loading: about the first 45 s of virtual time) virtual time is deliberately unpaced and ran about
+2x faster than real time, so ~60% of that audio was dropped for want of a free buffer; in gameplay the game is far
+slower than real time, so the stream will underrun. Expect garbled intro audio and choppy gameplay audio on hardware
+until the frame rate improves or the audio is paced/stretched to real time. The 3DS pacing clock counts from console
+power-on (no origin, unlike the PSP's boot-relative clock); aligning it with virtual time changed nothing measurable
+here (pacing is not reached in either phase), so that change was not kept - check it if x_pace is enabled.
+
+## Real-time pacing and the audio queue on the 3DS (2026-11-17)
+
+The NDSP queue held 16 x 256 frames; the audio model renders a whole sound-driver update at once, so about half of
+the gameplay audio found no free buffer. With 96 buffers (0.5 s, 96 KiB linear) no gameplay audio was dropped on the
+route (private Azahar with the placeholder DSP component), at ~+1 ms per frame.
+
+The pack's existing pacing (`hle_bootpace.h`, `src/hle_bl.h`) fits the 3DS problems exactly; both were opt-in:
+- `x_bootpace=1`: the loading screens/intro (virtual ~10-40 s) ran at ~2x real time (30 s of virtual time in ~14 s;
+  intro music cut); with it they run at 1x (25 s in 25.6 s), lag forgiven 29-34 s at idle points.
+- `x_pace=2`: in gameplay the 3DS is far below the game's 25 fps, so virtual time, the game clock and the audio model
+  fell behind real time (audio ~30% of real time = mostly silence between bursts). With it, the pack's clock log
+  shows virtual and game millisecond clock at x0.99-1.00 of real time, the in-game clock at 1 game minute per real
+  second, 5.2-6.4 fps in gameplay in Azahar (physics x0.3: the game clamps its timestep at 60 ms), and audio produced
+  at real-time rate (~20% still dropped in Azahar, plausibly its host-paced DSP against the emulated clock; check on
+  hardware).
+Both are now the defaults in 3DS release builds only (profile builds keep 0 so frame timings stay deterministic and
+comparable); `ps2rc.cfg` overrides. Verified in a release build with no cfg: 'config: x_pace=2' and
+'boot pacing: x_bootpace=1' logged, loading at 1x.
+
 ## Known issues from the pre-publication review (2026-11-15)
 
 * Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a

@@ -217,15 +217,15 @@ static const HudPlace sub_place[HUD_SUBS] = {
     [0]  = {580.5f, 18.5f, 560.0f, 146.0f, 1.40f},   /* clock 0x2A7020: x 545.5..615.5 y 18.5..43.1, centred */
     [3]  = {577.5f, 61.0f, 560.0f, 230.0f, 2.00f},   /* health bar 0x2A9C60: x 547..608 y 61..70 */
     [4]  = {577.5f, 61.0f, 560.0f, 230.0f, 2.00f},   /* (second health call) */
-    [5]  = {577.5f, 47.0f, 560.0f, 256.0f, 2.00f},   /* 0x2A99E0 (armour bar, x 546; y not yet observed) */
-    [6]  = {577.5f, 47.0f, 560.0f, 256.0f, 2.00f},
+    [5]  = {577.5f, 41.0f, 560.0f, 256.0f, 2.00f},   /* armour bar 0x2A99E0: x 546..608 y 41..50 (cheat run) */
+    [6]  = {577.5f, 41.0f, 560.0f, 256.0f, 2.00f},
     [9]  = {577.5f, 47.0f, 560.0f, 282.0f, 2.00f},   /* 0x2A9B40 (breath bar, x 546; y not yet observed) */
     [10] = {577.5f, 47.0f, 560.0f, 282.0f, 2.00f},
     [13] = {556.3f, 69.1f, 560.0f, 186.0f, 1.20f},   /* money 0x2A7020: x 497.1..615.5 y 69.1..93.6, centred */
     [16] = {520.5f, 18.0f, 560.0f,  10.0f, 1.80f},   /* weapon icon 0x2A9F20: x 497..544 y 18..72, centred */
     [17] = {520.5f, 18.0f, 560.0f,  10.0f, 1.80f},
-    [18] = {520.5f, 18.0f, 560.0f,  10.0f, 1.80f},   /* 0x2AA150 (ammo, drawn with the icon; not yet observed) */
-    [19] = {520.5f, 18.0f, 560.0f,  10.0f, 1.80f},
+    [18] = {521.5f, 57.0f, 560.0f, 112.0f, 1.50f},   /* ammo 0x2AA150: x 504.6..538.4 y 57..72 (soak); under the icon */
+    [19] = {521.5f, 57.0f, 560.0f, 112.0f, 1.50f},
     /* radar draw 0x2AC960: 26..29 are the four quarter sprites of the black ring (0x2B0B60, one ring quadrant each,
        ring box x 36..138 y 340..424); the square bottom-screen radar leaves them out, like the showcase */
     [26] = {0, 0, 0, 0, -1.0f}, [27] = {0, 0, 0, 0, -1.0f}, [28] = {0, 0, 0, 0, -1.0f}, [29] = {0, 0, 0, 0, -1.0f},

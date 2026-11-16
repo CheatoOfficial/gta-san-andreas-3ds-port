@@ -57,7 +57,13 @@ static void sim_charge(uint64_t cycles)
 
 static void init(void)
 {
+#if defined(HLE_3DS) && !defined(HLE_3DS_PROF)
+    /* 3DS release default 1: the loading screens and intro ran at ~2x real time in Azahar (music cut by the output
+       stage); with 1 they run at 1x. Profile builds keep 0 (deterministic timings). */
+    mode = hle_x_opt("bootpace", 1);
+#else
     mode = hle_x_opt("bootpace", 0);
+#endif
     if (mode < 0 || mode > 2) mode = 0;
     o_lag_ms = hle_x_opt("bootlag", 100);
     o_max_ms = hle_x_opt("pacemax", 250);

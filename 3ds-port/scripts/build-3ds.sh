@@ -63,7 +63,7 @@ if [ "$MODEL" = old3ds ] && { [ "$TEXTURE_BUDGET_KB" -gt 2048 ] || [ "$TEXTURE_S
 fi
 DEFS="-DHLE_3DS_AUTO_MODEL=$AUTO_MODEL -DHLE_3DS_OLD_MODEL=$OLD_MODEL -DHLE_3DS_SKY_PASS=${HLE_3DS_SKY_PASS:-1}"
 # Experimental: HLE_3DS_GPU_CLIP=1 lets PICA near-clip world triangles (see hle_3ds_gpu_clip_rows). Off by default.
-DEFS="$DEFS -DHLE_3DS_GPU_CLIP=${HLE_3DS_GPU_CLIP:-0}"
+DEFS="$DEFS -DHLE_3DS_GPU_CLIP=${HLE_3DS_GPU_CLIP:-0} -DHLE_3DS_GPU_LIGHT=${HLE_3DS_GPU_LIGHT:-0}"
 if [ "$MODEL" = auto ]; then
   if [ -n "${HLE_3DS_TEXTURE_SLOTS+x}${HLE_3DS_TEXTURE_BUDGET_KB+x}" ]; then
     echo "Per-model texture overrides require --model old3ds or new3ds" >&2; exit 1
@@ -104,7 +104,8 @@ fi
 # takes effect while the large translated-function object set stays cached.
 find "$BDIR/obj" -type f \( -name hle_3ds_main.o -o -name hle_3ds_profile.o -o -name hle_3ds_heaps.o -o -name hle_main.o -o -name hle_sce.o -o -name hle_prof.o \
   -o -name hle_3ds_gfx.o -o -name hle_3ds_texture.o -o -name hle_w3d.o -o -name w3d_citro3d_backend.o \
-  -o -name w3d_citro3d_adapter.o -o -name hle_3ds_platform.o -o -name hle_iop_servers.o -o -name audio_3ds.o -o -name hle_dev_pad_probe.o \) \
+  -o -name w3d_citro3d_adapter.o -o -name hle_3ds_platform.o -o -name hle_iop_servers.o -o -name audio_3ds.o -o -name hle_dev_pad_probe.o \
+  -o -name hle_bootpace.o -o -name hle_bl.o \) \
   -delete 2>/dev/null || true
 
 # The 3DS texture cache reuses PS2RC's PS2-texture converter, which lives in the pack's psp/ source folder

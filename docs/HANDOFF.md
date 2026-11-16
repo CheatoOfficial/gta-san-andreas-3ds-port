@@ -275,3 +275,20 @@ Files: `src/hle_hud.c/.h` (groups, element placement table, bounds log), `sites.
 
 Open: confirm ammo/armour/breath/wanted placement when those appear (read `hud bounds ... element N` lines and adjust
 `sub_place` / the G_TR box); a loading-screen map on the bottom screen (the video shows one); Old mode check.
+
+
+## Claude: GPU lighting (2026-11-17, branch claude/gpu-light, stacked on claude/bottom-hud)
+
+`HLE_3DS_GPU_LIGHT=1` (with `HLE_3DS_GPU_CLIP=1`) moves the lit meshes' camera/world transform and lighting into the
+vertex shader; -33% lit conversion, -13% busiest frame, captures within 2 levels. Evidence in `docs/3DS_STATUS.md`.
+Both switches stay off by default until a hardware run. Next: Old mode check; consider enabling both after hardware.
+
+Audio (Claude, 2026-11-17): with a placeholder `dspfirm.cdc` in the private emulator profile NDSP works and the full
+SPU2 path costs ~11 ms/frame; output drops ~60% during the unpaced intro and will underrun in gameplay (details in
+`docs/3DS_STATUS.md`, "Audio output path in the emulator"). Next: pace or resample audio to real time, or decide the
+audio policy for slow frames. Old mode: the gothic zone-name font is garbled in every compact-profile build checked
+(predates the HUD work; likely the 128x128 compact decode limit on a larger font texture).
+
+Pacing (Claude, 2026-11-17): 3DS release builds now default to x_bootpace=1 and x_pace=2 (real time), profile builds
+keep the deterministic defaults; NDSP queue 96 buffers. See `docs/3DS_STATUS.md`, "Real-time pacing and the audio
+queue". Performance comparisons must use profile builds (or set x_pace=0).

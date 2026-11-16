@@ -31,6 +31,23 @@ int w3d_citro3d_convert_mesh_range(const W3dCam *camera, const float world[12], 
 #define W3D_C3D_SCREEN_UNKNOWN 4u
 unsigned w3d_citro3d_take_screen(void);
 
+/* GPU-lit conversion (HLE_3DS_GPU_LIGHT, needs HLE_3DS_GPU_CLIP): the same ranges as w3d_citro3d_convert_lit_range,
+   but each output vertex is the skinned object-space position (clip = x, y, z, 1), its object-space normal
+   (color = nx, ny, nz, 0) and the final UV; the vertex shader applies camera x world, the lighting and the material
+   step from W3dGpuLight. The conversion screen (w3d_citro3d_take_screen) covers these vertices too, with the near
+   plane evaluated through camera x world, so the caller can fall back to the CPU path when needed. */
+typedef struct {
+    float world[12], proj[16];                 /* the call's world matrix and camera projection */
+    float base[3], material[3], diffuse, alpha; /* lit formula; disabled lighting = base 1, no lights, alpha 1 */
+    float dir[4][3], col[4][3];                /* unused lights have zero colour */
+    float post_mul[4], post_add[3];            /* material step: rgb = add + c * mul, a = a * mul.a (identity: 1, 0) */
+} W3dGpuLight;
+int w3d_citro3d_convert_lit_range_gpu(const W3dCam *camera, const float world[12], const W3dState *state,
+                                     const W3dState *lit_state, const W3dLights *lights, int nbones,
+                                     const float bones[8][12], const W3dMeshView *mesh, const uint8_t *verts_override,
+                                     uint32_t first_vert, const uint32_t *prim_words, uint32_t nprims,
+                                     W3dC3dVertex *output, int output_capacity, W3dGpuLight *gpu);
+
 int w3d_citro3d_convert_lit_range(const W3dCam *camera, const float world[12], const W3dState *state,
                                  const W3dState *lit_state, const W3dLights *lights, int nbones,
                                  const float bones[8][12], const W3dMeshView *mesh, const uint8_t *verts_override,
