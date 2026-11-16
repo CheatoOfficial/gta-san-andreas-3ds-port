@@ -199,19 +199,3 @@ The private release package has READ-ME-FIRST.txt covering Homebrew Launcher sta
 log collection and limits. START is game pause during normal operation, not an unconditional quit key.
 Saving is unimplemented. Need real New 3DS LL memory/performance, controls, sound and sustained gameplay
 before any playable/validated claim. Further renderer work can proceed independently from this hardware gate.
-
-
-## Codex: ambient-only lighting candidate (2026-11-16)
-
-Branch codex/ambient-lit-fast-path is based on the landed-main hardware worktree. It prepares the rounded
-flat material colour once per conversion call when no directional lights remain after clamping, and skips
-normal decode/skin/world-transform/normalisation for that case and disabled/debug/null lighting.
-Position skinning and position/UV/clip conversion remain active. Directional terms retain their original
-arithmetic order; negative light-count behavior is preserved by using <=0 for the flat case.
-This candidate is separate from the hardware release artifact already built from main.
-
-Checks passed: 14 host executables (including 12000 exact-lighting calls and debug path), 6000 adapter
-cases with the existing 537190 one-level colour differences unchanged, 11 selected Python tests (20
-deselected), ARM11 native-source compilation for all three targets. Existing posix_memalign warning remains.
-Runtime frequency/benefit is unmeasured; do not merge or claim a speedup until the private same-route profile
-and capture comparison is complete. Hardware/normal controls/audio remain unverified.

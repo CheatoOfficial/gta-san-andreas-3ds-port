@@ -287,7 +287,7 @@ static float lit_read_weight(const uint8_t *p, unsigned fmt, unsigned index)
    arithmetic order below: factoring material into the directional colour changes byte rounding. */
 typedef struct {
     int enabled, nlights;
-    uint32_t alpha, flat_colour;
+    uint32_t alpha;
     float diffuse_scale, material[3], base[3];
     const W3dLights *lights;
 } W3dLitPrepared;
@@ -295,7 +295,6 @@ typedef struct {
 static W3dLitPrepared lit_prepare(const W3dState *state, const W3dLights *lights)
 {
     W3dLitPrepared result = {0};
-    result.flat_colour = 0xFFFFFFFFu;
 #if !HLE_3DS_LIGHTING_DEBUG
     if (state->lights && lights) {
         result.enabled = 1;
@@ -312,16 +311,6 @@ static W3dLitPrepared lit_prepare(const W3dState *state, const W3dLights *lights
             result.base[channel] = (float)((state->lemit >> (8 * channel)) & 0xFFu) * (1.0f / 255.0f) +
                                   result.material[channel] * ambient_scale * lights->amb[channel];
         }
-        /* With no directional terms the rounded material colour is invariant across the call. */
-        if (result.nlights <= 0) {
-            result.flat_colour = result.alpha;
-            for (int channel = 0; channel < 3; ++channel) {
-                int component = (int)(result.base[channel] * 255.0f + 0.5f);
-                if (component < 0) component = 0;
-                if (component > 255) component = 255;
-                result.flat_colour |= (uint32_t)component << (8 * channel);
-            }
-        }
     }
 #else
     (void)state; (void)lights;
@@ -331,7 +320,7 @@ static W3dLitPrepared lit_prepare(const W3dState *state, const W3dLights *lights
 
 static uint32_t lit_vertex_colour(const float normal[3], const W3dLitPrepared *prepared)
 {
-    if (!prepared->enabled || prepared->nlights <= 0) return prepared->flat_colour;
+    if (!prepared->enabled) return 0xFFFFFFFFu;
     const W3dLights *lights = prepared->lights;
     const float normal_length = sqrtf(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
     const float inverse_length = normal_length > 0.0f ? 1.0f / normal_length : 0.0f;
@@ -361,13 +350,11 @@ static int lit_vertex(const float world[12], const W3dLitPrepared *prepared,
 {
     if (index >= mesh->nverts) return 0;
     const uint8_t *v = vertices + (size_t)index * mesh->stride;
-    /* Position skinning still runs for every vertex; normals affect only directional lighting. */
-    const int needs_normal = prepared->enabled && prepared->nlights > 0;
     float position[3], normal[3] = {0.0f, 0.0f, 1.0f};
     float uv[2] = {0.0f, 0.0f};
     for (int i = 0; i < 3; ++i)
         position[i] = lit_read_component(v + layout->position_off, layout->position_fmt, (unsigned)i, 0);
-    if (needs_normal && layout->normal_fmt)
+    if (layout->normal_fmt)
         for (int i = 0; i < 3; ++i)
             normal[i] = lit_read_component(v + layout->normal_off, layout->normal_fmt, (unsigned)i, 0);
     if (layout->uv_fmt)
@@ -387,17 +374,16 @@ static int lit_vertex(const float world[12], const W3dLitPrepared *prepared,
             for (int k = 0; k < 3; ++k) {
                 skinned_position[k] += weight * (position[0] * matrix[k] + position[1] * matrix[3 + k] +
                                                    position[2] * matrix[6 + k] + matrix[9 + k]);
-            }
-            if (needs_normal) for (int k = 0; k < 3; ++k)
                 skinned_normal[k] += weight * (normal[0] * matrix[k] + normal[1] * matrix[3 + k] +
                                                 normal[2] * matrix[6 + k]);
+            }
         }
         memcpy(position, skinned_position, sizeof(position));
         memcpy(normal, skinned_normal, sizeof(normal));
     }
 
-    float world_normal[3] = {0};
-    if (needs_normal) for (int k = 0; k < 3; ++k)
+    float world_normal[3];
+    for (int k = 0; k < 3; ++k)
         world_normal[k] = normal[0] * world[k] + normal[1] * world[3 + k] + normal[2] * world[6 + k];
     out->u = uv[0];
     out->v = uv[1];
