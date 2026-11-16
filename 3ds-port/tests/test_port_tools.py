@@ -88,6 +88,10 @@ def test_summary_rejects_unrestricted_profiler_text_and_trailing_payloads():
              "capacity-dropped=0, texture omissions=0, state simplifications=0, PSP segments=0, meshes skipped=0, adapter error=0")
     assert any(rx.fullmatch(frame) for rx in summary.ALLOW)
     assert not any(rx.fullmatch(frame + " arbitrary payload") for rx in summary.ALLOW)
+    pressure = ("Citro3D texture pressure frame 120: slots=300/512 pinned=300 cache=600/2048 KiB peak=600 KiB linear_free=2048 KiB "
+                "decoded=300 failures=0 badptr=0 badpacket=0 oversize=0 pinned_fail=0 noslot=0 texinit=0 convert=0 scaled=300 invalidated=0")
+    assert any(rx.fullmatch(pressure) for rx in summary.ALLOW)
+    assert not any(rx.fullmatch(pressure + " arbitrary payload") for rx in summary.ALLOW)
 
 
 def git_at(path, *args):

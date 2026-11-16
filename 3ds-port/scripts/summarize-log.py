@@ -20,6 +20,9 @@ ALLOW = [re.compile(p) for p in (
     r"^PROF window real [\d.]+-[\d.]+ s: \d+ iterations, [\d.]+ ms/it "
     r"\(idle\.pace [\d.]+, io [\d.]+, instrument ~[\d.]+\)$",
     r"3DS resources: old_profile=[01] new_hardware=[01] heap_KiB=\d+ linear_KiB=\d+",
+    r"Citro3D texture pressure frame \d+: slots=\d+/\d+ pinned=\d+ cache=\d+/\d+ KiB peak=\d+ KiB linear_free=\d+ KiB "
+    r"decoded=\d+ failures=\d+ badptr=\d+ badpacket=\d+ oversize=\d+ pinned_fail=\d+ noslot=\d+ texinit=\d+ convert=\d+"
+    r"(?: scaled=\d+ invalidated=\d+)?",
 )]
 SUSPECT = re.compile(r"fatal|error|abort|crash|panic|unsupported|BREAK|TRAP", re.I)
 

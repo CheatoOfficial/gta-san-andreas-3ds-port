@@ -26,7 +26,7 @@ Take-Two Interactive, Sony Interactive Entertainment or Nintendo. "Grand Theft A
 | Input | A scripted pad route moves the player in Azahar. **Physical buttons are untested** |
 | Audio | The sound-driver model runs; **no audible output has been verified** |
 | Real hardware | **Never run on a real 3DS.** Emulator speed is probably pessimistic for float code, so hardware may differ |
-| Old 3DS / Old 3DS XL / original 2DS | Separate `--model old3ds` build. **Boots and draws the city in Azahar's Old 3DS mode**, but its small texture cache drops many textures (heavy visual loss). Never run on real old hardware |
+| Old 3DS / Old 3DS XL / original 2DS | Separate `--model old3ds` build with compact textures and modifier controls. See status for emulator checks and remaining geometry/memory limits. Never run on real old hardware |
 
 Details, measurements and the open work list: [docs/3DS_STATUS.md](docs/3DS_STATUS.md).
 

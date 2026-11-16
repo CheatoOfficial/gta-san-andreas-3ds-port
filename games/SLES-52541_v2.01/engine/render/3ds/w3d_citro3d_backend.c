@@ -185,15 +185,16 @@ void w3d_be_range(const W3dMeshView *mesh, const uint8_t *verts_override, uint32
         if (!frame_error) frame_error = -1;
         return;
     }
-    W3dC3dVertex *out;
-    const unsigned frame_start = frame_vertex_count;
-    if (!reserve_vertices(W3D_C3D_FRAME_VERTEX_CAPACITY - frame_vertex_count, &out)) return;
-    const int cap = (int)(W3D_C3D_FRAME_VERTEX_CAPACITY - (unsigned)(out - frame_vertices));
     const int is_lit = mesh && mesh->fmt == W3D_FMT_LIT;
     if (W3D_C3D_STATIC_VERT_BUDGET && !is_lit && frame_static_verts >= W3D_C3D_STATIC_VERT_BUDGET) {
         ++budget_skipped;
         return;
     }
+    /* A rejected static draw must not reserve the rest of the buffer: later lit draws still need it. */
+    W3dC3dVertex *out;
+    const unsigned frame_start = frame_vertex_count;
+    if (!reserve_vertices(W3D_C3D_FRAME_VERTEX_CAPACITY - frame_vertex_count, &out)) return;
+    const int cap = (int)(W3D_C3D_FRAME_VERTEX_CAPACITY - (unsigned)(out - frame_vertices));
     const uint64_t conv_t0 = svcGetSystemTick();
     const int written = mesh && mesh->fmt == W3D_FMT_LIT
         ? w3d_citro3d_convert_lit_range(&current_camera, current_world, &current_state, &current_lit_state,

@@ -657,11 +657,11 @@ void hle_3ds_gfx_present(void)
                 ++overlay_feedback_skipped;
                 continue;
             }
-            if (!hle_3ds_texture_prepare(batch->state.raster, NULL)) {
+            if (!hle_3ds_texture_prepare_2d(batch->state.raster)) {
                 ++overlay_texture_omissions;
                 continue;
             }
-            texture = hle_3ds_texture_get(batch->state.raster);
+            texture = hle_3ds_texture_get_2d(batch->state.raster);
             if (!texture) {
                 ++overlay_texture_omissions;
                 continue;

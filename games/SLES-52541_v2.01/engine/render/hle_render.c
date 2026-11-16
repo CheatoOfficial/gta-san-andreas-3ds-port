@@ -373,7 +373,9 @@ HLE_FN(drv_raster_create)
         log_call(H_RAS_CREATE, c, x);
     }
     GUEST_CALL(H_RAS_CREATE, drv_raster_create);
-#ifdef HLE_PSP
+#if defined(HLE_3DS)
+    hle_raster_forget(r);
+#elif defined(HLE_PSP)
     hle_ge_raster_changed(r);
 #endif
     if (lg) log_ret(H_RAS_CREATE, c);
@@ -381,7 +383,9 @@ HLE_FN(drv_raster_create)
 
 HLE_FN(drv_raster_destroy)
 {
-#ifndef HLE_PSP
+#if defined(HLE_3DS)
+    hle_raster_forget(ARG(1));
+#elif !defined(HLE_PSP)
     if (rnd_on) hle_raster_forget(ARG(1));
 #else
     hle_ge_raster_changed(ARG(1));
@@ -395,7 +399,9 @@ HLE_FN(drv_raster_unlock)
 {
     uint32_t r = ARG(1);
     PASS(H_RAS_UNLOCK, drv_raster_unlock);
-#ifdef HLE_PSP
+#if defined(HLE_3DS)
+    hle_raster_forget(r);
+#elif defined(HLE_PSP)
     hle_ge_raster_changed(r);                              /* the game may have rewritten the texels */
 #else
     (void)r;
@@ -409,7 +415,9 @@ HLE_FN(drv_texture_read)
     if (lg) log_call(H_TEX_READ, c, NULL);
     GUEST_CALL(H_TEX_READ, drv_texture_read);
     uint32_t tex = gw_ok(out), ras = gw_ok(tex);
-#ifdef HLE_PSP
+#if defined(HLE_3DS)
+    if (ras) hle_raster_forget(ras);
+#elif defined(HLE_PSP)
     if (ras) hle_ge_raster_changed(ras);
 #endif
     if (tex) {

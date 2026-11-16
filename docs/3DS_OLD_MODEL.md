@@ -1,8 +1,8 @@
 # Old 3DS / Old 3DS XL / original 2DS experiment
 
 An Old-model resource and input profile exists, selected with `--model old3ds`.
-It is **experimental and not validated as a working game port**. No original-model hardware run or full Old-model
-game build/run has been established by this change. New 3DS emulator measurements do not predict Old 3DS speed.
+It is **experimental and not established as playable**. Full builds and Old-mode Azahar city runs exist; original-model
+hardware remains untested. New 3DS emulator measurements do not predict Old 3DS speed.
 
 ## Build and select the model
 
@@ -29,7 +29,9 @@ An emulator in Old-model mode still cannot prove hardware memory or performance 
 | Temporary mesh vertices | 32,768 | 8,192 |
 | World batches | 4,096 | 2,048 |
 | Overlay vertices / batches | 16,384 / 2,048 | 4,096 / 512 |
-| Texture cache | 20 MiB / 384 slots | 2 MiB / 128 slots |
+| Texture cache | 20 MiB / 384 slots | 2 MiB / 512 slots |
+| Uploaded texels | RGBA8 | RGB565 / RGBA5551 / RGBA4 by alpha class |
+| Texture detail ceiling | existing level policy, up to 512 | world: 64 pixels / 8 KiB; HUD: 128 pixels / 32 KiB |
 | Static vertices converted per frame | unlimited release / 20,000 profile | 10,000 |
 | Linear heap reservation | libctru automatic | 8 MiB |
 
@@ -37,6 +39,17 @@ The shared 32 MiB guest address window is preserved. Reduced buffers and draw bu
 they do not preserve full scene detail. `--vert-budget` overrides the static draw budget, including `0` to disable it.
 Old-profile texture overrides cannot exceed the documented cache/slot cap.
 Capture memory is allocated only in builds that enable captures.
+
+Old-model textures use stored smaller levels or point decimation when necessary. Opaque images use RGB565, cutouts
+use RGBA5551 and blended images use RGBA4. This trades detail/color precision for scene coverage; the New-model path
+continues to use RGBA8. World and HUD copies are cached separately so a low-detail world image cannot replace a HUD atlas.
+The Old-model decode scratch buffer is 69,632 bytes instead of 1,052,672 bytes. The 2 MiB cache cap and 8 MiB linear
+reservation are unchanged. Neither cache resizing nor the smaller scratch proves that the whole game fits on hardware.
+
+Raster creation/destruction, unlock and texture-read hooks now invalidate all matching 3DS cache copies. Already-used
+snapshots survive until their GPU work completes; new draws may be refused temporarily rather than sampling stale data.
+The static draw budget still skips whole meshes in draw order. A rejected static mesh no longer consumes the remaining
+frame buffer, so later immediate/lit draws retain their space. These are separate limits from texture residency.
 
 Available normal heap depends on the full linked code/data/BSS and the homebrew launcher's memory allowance.
 Startup refuses a normal heap smaller than 36 MiB; this is only an initial floor, not a guarantee that later allocations fit.
@@ -63,11 +76,10 @@ Release builds are needed to test physical controls; profile builds use the scri
 
 ## Acceptance checks still required
 
-1. ~~Build the full Old-model release from private local conversion outputs~~ and ~~run it in Old-model Azahar~~: done
-   2026-11-15, it boots and draws the city with heavy texture loss (see 3DS_STATUS.md). Still to do: the profile build,
-   and a texture-cache policy that keeps the scene recognisable within the Old-model memory limits.
-3. On Old 3DS/Old 3DS XL/original 2DS, verify boot and sustained allocation headroom under the documented launcher setup.
-4. Check every modifier and camera direction in a release build, then audio and sustained gameplay.
-5. Share only the reviewed allowlisted timing summary from `summarize-log.py`; never upload the game build, captures or raw log.
+1. Follow the latest full-build/emulator evidence in [3DS_STATUS.md](3DS_STATUS.md); repeat longer scenes and streaming
+   transitions rather than extrapolating a short city run to the whole game.
+2. On Old 3DS/Old 3DS XL/original 2DS, verify boot and sustained allocation headroom under the documented launcher setup.
+3. Check every modifier and camera direction in a release build, then audio and sustained gameplay.
+4. Share only the reviewed allowlisted timing summary from `summarize-log.py`; never upload the game build, captures or raw log.
 
 Until these pass, describe this as an experimental compatibility profile, not confirmed Old 3DS support.

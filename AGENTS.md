@@ -7,7 +7,7 @@ User instructions for the current task take precedence over these defaults.
 ## Project and boundaries
 
 - Experimental PS2RC-derived 3DS runtime. Neither model is established as playable.
-- New 3DS has emulator observations; Old 3DS has an experimental resource/control profile, pending a full game build and run.
+- Both model profiles have full-build and emulator observations. Real hardware, physical controls, audio and sustained play remain unverified.
 - Keep `LICENSE` and `NOTICE.md` identical to pinned upstream `8cd56bb`. Keep the exact PS2RC credit in README and release pages.
 - Never commit, push, attach or publish disc data, translated/generated game sources, game executables, captures, or raw session logs.
 - Use synthetic fixtures for tests. Share only reviewed output of `3ds-port/scripts/summarize-log.py`.
