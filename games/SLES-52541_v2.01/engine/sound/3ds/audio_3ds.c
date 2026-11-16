@@ -7,7 +7,9 @@
 #include "spu2_lite.h"
 
 #define AUDIO_3DS_CHANNEL 0
-#define AUDIO_3DS_BUFFERS 16
+/* The audio model renders one sound-driver update at a time (often a whole frame of game time in one burst), so the
+   queue must hold a burst: 96 x 256 frames = 0.5 s (96 KiB linear). 16 buffers dropped about half the audio. */
+#define AUDIO_3DS_BUFFERS 96
 #define AUDIO_3DS_FRAMES  256
 
 struct Audio3ds {
