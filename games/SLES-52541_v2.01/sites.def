@@ -28,3 +28,38 @@ SITE(002b01a0, 002b0408, hud_site_tl)           /* help text box 0x2AE060 */
 SITE(002b01a0, 002b0410, hud_site_c)            /* big / success messages 0x2AF890 */
 SITE(002b01a0, 002b0418, hud_site_c)            /* 0x2AF220 */
 SITE(002b01a0, 002b0420, hud_site_c)            /* 0x2AF630 */
+/* 3DS dual-screen HUD (src/hle_hud.c): the element calls inside the status draw 0x2AB500, so each element can be
+   placed on its own in the bottom screen's status column */
+SITE(002ab500, 002ab608, hud_sub_0)           /* 0x2A7020 */
+SITE(002ab500, 002ab650, hud_sub_1)           /* 0x2B0560 */
+SITE(002ab500, 002ab688, hud_sub_2)           /* 0x2B0560 */
+SITE(002ab500, 002ab6b8, hud_sub_3)           /* 0x2A9C60 x 499 */
+SITE(002ab500, 002ab6fc, hud_sub_4)           /* 0x2A9C60 x 499 */
+SITE(002ab500, 002ab720, hud_sub_5)           /* 0x2A99E0 x 546 */
+SITE(002ab500, 002ab764, hud_sub_6)           /* 0x2A99E0 x 546 */
+SITE(002ab500, 002ab7c8, hud_sub_7)           /* 0x2D8E40 */
+SITE(002ab500, 002ab86c, hud_sub_8)           /* 0x2D8E40 */
+SITE(002ab500, 002ab8b4, hud_sub_9)           /* 0x2A9B40 x 546 */
+SITE(002ab500, 002ab8fc, hud_sub_10)          /* 0x2A9B40 x 546 */
+SITE(002ab500, 002ab93c, hud_sub_11)          /* 0x2B0560 */
+SITE(002ab500, 002ab978, hud_sub_12)          /* 0x2B0560 */
+SITE(002ab500, 002abbcc, hud_sub_13)          /* 0x2A7020 */
+SITE(002ab500, 002abc04, hud_sub_14)          /* 0x2B0560 */
+SITE(002ab500, 002abc30, hud_sub_15)          /* 0x2B0560 */
+SITE(002ab500, 002abc50, hud_sub_16)          /* 0x2A9F20 */
+SITE(002ab500, 002abc8c, hud_sub_17)          /* 0x2A9F20 */
+SITE(002ab500, 002abca0, hud_sub_18)          /* 0x2AA150 */
+SITE(002ab500, 002abcdc, hud_sub_19)          /* 0x2AA150 */
+/* ... and the element calls inside the radar draw 0x2AC960 */
+SITE(002ac960, 002acbf0, hud_sub_20)          /* 0x2B0BD0 */
+SITE(002ac960, 002acc64, hud_sub_21)          /* 0x264190 */
+SITE(002ac960, 002acccc, hud_sub_22)          /* 0x2B2290 */
+SITE(002ac960, 002acd18, hud_sub_23)          /* 0x264190 */
+SITE(002ac960, 002acda8, hud_sub_24)          /* indirect */
+SITE(002ac960, 002ace34, hud_sub_25)          /* 0x2B2290 */
+SITE(002ac960, 002ace80, hud_sub_26)          /* 0x2B0B60 (ring quarter?) */
+SITE(002ac960, 002acecc, hud_sub_27)          /* 0x2B0B60 (ring quarter?) */
+SITE(002ac960, 002acf18, hud_sub_28)          /* 0x2B0B60 (ring quarter?) */
+SITE(002ac960, 002acf64, hud_sub_29)          /* 0x2B0B60 (ring quarter?) */
+SITE(002ac960, 002ac9ec, hud_sub_30)          /* indirect */
+SITE(002ac960, 002aca00, hud_sub_31)          /* indirect */

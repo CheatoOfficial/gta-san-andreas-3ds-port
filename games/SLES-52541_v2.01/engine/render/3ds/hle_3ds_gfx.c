@@ -13,6 +13,7 @@
 #include "hle_3ds_fog.h"
 #include "hle_3ds_texture.h"
 #include "hle_render.h"
+#include "hle_hud.h"
 #include "w3d_citro3d_backend.h"
 #include "vshader_shbin.h"
 
@@ -52,7 +53,9 @@
 #define HLE_3DS_CMDBUF_SIZE (C3D_DEFAULT_CMDBUF_SIZE * 4u)
 #endif
 
-#define HLE_3DS_RGBA8(r, g, b, a) ((uint32_t)(r) | (uint32_t)(g) << 8 | (uint32_t)(b) << 16 | (uint32_t)(a) << 24)
+/* C3D_RenderTargetClear takes 0xRRGGBBAA for an RGBA8 target (the memory fill writes the word as-is and the PICA
+   stores RGBA8 as A, B, G, R bytes). The previous r-in-the-low-byte order cleared black to red. */
+#define HLE_3DS_RGBA8(r, g, b, a) ((uint32_t)(r) << 24 | (uint32_t)(g) << 16 | (uint32_t)(b) << 8 | (uint32_t)(a))
 #define CLEAR_COLOR HLE_3DS_RGBA8(0x10, 0x18, 0x20, 0xFF)
 #define DISPLAY_TRANSFER_FLAGS \
     (GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) | \
@@ -68,9 +71,12 @@ _Static_assert(offsetof(Hle3dsVertex, uv) == offsetof(W3dC3dVertex, uv), "UV off
 _Static_assert(offsetof(Hle3dsVertex, view_z) == offsetof(W3dC3dVertex, view_z), "view z offset");
 
 typedef struct { unsigned first, count; } Hle3dsBatchRange;
-typedef struct { unsigned first, count; RndState state; uint8_t lines; } Hle3ds2dBatch;
+/* screen: 0 top, 1 bottom (the dual-screen HUD layout, hle_hud.h) */
+typedef struct { unsigned first, count; RndState state; uint8_t lines, screen, radar; } Hle3ds2dBatch;
 
-static C3D_RenderTarget *top;
+static C3D_RenderTarget *top, *bottom;
+static C3D_Mtx bottom_projection;
+static int bottom_active;
 static C3D_Tex fog_ramp;
 static int fog_ramp_ready;
 static DVLB_s *shader_dvlb;
@@ -119,29 +125,40 @@ static GPU_CULLMODE batch_cull_mode(const W3dState *state)
 static int uv_probe_logged;
 #endif
 
+static void save_target(C3D_RenderTarget *target, unsigned height, const char *kind, unsigned frame);
 static void save_debug_frame(unsigned frame)
 {
-    if (!top || !top->frameBuf.colorBuf || !capture_rgb) return;
+    save_target(top, 400u, "frame", frame);
+    if (bottom_active) save_target(bottom, 320u, "bottom", frame);
+    ++capture_count;
+    LOG("Citro3D capture: frame %u (%u of %u)%s\n", frame, capture_count, (unsigned)HLE_3DS_CAPTURE_MAX,
+        bottom_active ? " with the bottom screen" : "");
+    hle_plat_log_flush();
+}
+
+static void save_target(C3D_RenderTarget *target, unsigned height, const char *kind, unsigned frame)
+{
+    if (!target || !target->frameBuf.colorBuf || !capture_rgb) return;
     C3D_FrameSync();
     const u32 flags = GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |
                       GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB8) |
                       GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO);
-    C3D_SyncDisplayTransfer((u32 *)top->frameBuf.colorBuf, GX_BUFFER_DIM(240, 400),
-                            (u32 *)capture_rgb, GX_BUFFER_DIM(240, 400), flags);
-    GSPGPU_InvalidateDataCache(capture_rgb, 240u * 400u * 3u);
+    C3D_SyncDisplayTransfer((u32 *)target->frameBuf.colorBuf, GX_BUFFER_DIM(240, height),
+                            (u32 *)capture_rgb, GX_BUFFER_DIM(240, height), flags);
+    GSPGPU_InvalidateDataCache(capture_rgb, 240u * height * 3u);
     char path[96];
-    snprintf(path, sizeof(path), "sdmc:/3ds/ps2rc-sa/gpu-frame-%06u.ppm", frame);
+    snprintf(path, sizeof(path), "sdmc:/3ds/ps2rc-sa/gpu-%s-%06u.ppm", kind, frame);
     FILE *file = fopen(path, "wb");
     if (!file) {
         LOG("Citro3D capture: fopen failed for %s\n", path);
         hle_plat_log_flush();
         return;
     }
-    fprintf(file, "P6\n240 400\n255\n");
+    fprintf(file, "P6\n240 %u\n255\n", height);
     /* RGB8 transfer memory is BGR; P6 files require RGB byte order. Keep the
        GPU destination read-only so a later transfer cannot race dirty lines. */
     u8 rgb_row[240u * 3u];
-    for (unsigned y = 0; y < 400u; ++y) {
+    for (unsigned y = 0; y < height; ++y) {
         for (unsigned x = 0; x < 240u; ++x) {
             const u8 *bgr = capture_rgb + (y * 240u + x) * 3u;
             rgb_row[x * 3u] = bgr[2];
@@ -151,9 +168,6 @@ static void save_debug_frame(unsigned frame)
         fwrite(rgb_row, 1, sizeof(rgb_row), file);
     }
     fclose(file);
-    ++capture_count;
-    LOG("Citro3D capture: %s (%u of %u)\n", path, capture_count, (unsigned)HLE_3DS_CAPTURE_MAX);
-    hle_plat_log_flush();
 }
 
 static unsigned fog_morton8(unsigned x, unsigned y)
@@ -257,6 +271,36 @@ fail:
 
 int hle_3ds_gfx_ready(void) { return gfx_ready; }
 
+/* The dual-screen HUD takes the bottom screen from the text console on its first bottom-screen element (so startup
+   messages stay readable until the game draws its HUD); hle_3ds_gfx_release_bottom hands it back for exit text. */
+static int enable_bottom(void)
+{
+    if (bottom_active) return 1;
+    if (!gfx_ready) return 0;
+    if (!bottom) {
+        bottom = C3D_RenderTargetCreate(240, 320, GPU_RB_RGBA8, -1);
+        if (!bottom) { LOG("Citro3D bottom HUD: render target allocation failed; HUD stays on the top screen\n"); return 0; }
+    }
+    gfxSetScreenFormat(GFX_BOTTOM, GSP_BGR8_OES);
+    gfxSetDoubleBuffering(GFX_BOTTOM, true);
+    C3D_RenderTargetSetOutput(bottom, GFX_BOTTOM, GFX_LEFT, DISPLAY_TRANSFER_FLAGS);
+    Mtx_OrthoTilt(&bottom_projection, 0.0f, 320.0f, 0.0f, 240.0f, 0.0f, 1.0f, true);
+    bottom_active = 1;
+    LOG("Citro3D bottom HUD: bottom screen taken from the console (frame %u)\n", present_count);
+    return 1;
+}
+
+int hle_3ds_gfx_bottom_owned(void) { return bottom_active; }
+
+void hle_3ds_gfx_release_bottom(void)
+{
+    if (!bottom_active) return;
+    bottom_active = 0;
+    C3D_FrameSync();
+    if (bottom) C3D_RenderTargetSetOutput(NULL, GFX_BOTTOM, GFX_LEFT, 0);
+    consoleInit(GFX_BOTTOM, NULL);                         /* RGB565, single-buffered text console again */
+}
+
 void hle_3ds_gfx_clear(const uint8_t rgba[4], int mode)
 {
     if (!rgba || !(mode & 1)) return;
@@ -281,6 +325,19 @@ static void queue_2d(const RndVtx *vertices, int count, const RndState *state, i
     batch->first = overlay_vertex_count;
     batch->state = *state;
     batch->lines = 0;
+    if (hle_hud_screen && !bottom_active) enable_bottom();
+    batch->screen = (uint8_t)(bottom_active && hle_hud_screen);
+    batch->radar = (uint8_t)(batch->screen && hle_hud_group == HLE_HUD_GROUP_RADAR);   /* clipped to its panel */
+    if (hle_hud_group >= 0) {                                   /* per-group guest bounds (layout diagnostics) */
+        float x0 = vertices[0].x, x1 = x0, y0 = vertices[0].y, y1 = y0;
+        for (int i = 1; i < count; ++i) {
+            if (vertices[i].x < x0) x0 = vertices[i].x;
+            if (vertices[i].x > x1) x1 = vertices[i].x;
+            if (vertices[i].y < y0) y0 = vertices[i].y;
+            if (vertices[i].y > y1) y1 = vertices[i].y;
+        }
+        hle_hud_note_bounds(x0, y0, x1, y1);
+    }
     if (!lines) {
         unsigned n = (unsigned)count - (unsigned)count % 3u;
         if (n > capacity) n = capacity / 3u * 3u;
@@ -308,11 +365,12 @@ static void queue_2d(const RndVtx *vertices, int count, const RndState *state, i
     }
     for (unsigned i = 0; i < segments; ++i) {
         const RndVtx *a = &vertices[i * 2u], *b = &vertices[i * 2u + 1u];
-        const float dx = (b->x - a->x) * 400.0f / (float)overlay_screen_width;
+        const float screen_w = batch->screen ? 320.0f : 400.0f;
+        const float dx = (b->x - a->x) * screen_w / (float)overlay_screen_width;
         const float dy = (b->y - a->y) * 240.0f / (float)overlay_screen_height;
         const float length = sqrtf(dx * dx + dy * dy);
         const float half_width = 0.5f;
-        const float ox = length > 1.0e-5f ? -dy * (half_width / length) * overlay_screen_width / 400.0f : 0.0f;
+        const float ox = length > 1.0e-5f ? -dy * (half_width / length) * overlay_screen_width / screen_w : 0.0f;
         const float oy = length > 1.0e-5f ?  dx * (half_width / length) * overlay_screen_height / 240.0f : 0.5f;
         RndVtx q[4] = {
             {a->x + ox, a->y + oy, a->u, a->v, a->r, a->g, a->b, a->a},
@@ -410,6 +468,68 @@ static void apply_2d_blend(const RndState *state)
     const int src = state->src_blend >= 1 && state->src_blend <= 11 ? state->src_blend : 5;
     const int dst = state->dst_blend >= 1 && state->dst_blend <= 11 ? state->dst_blend : 6;
     C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, factors[src], factors[dst], factors[src], factors[dst]);
+}
+
+/* One screen's 2D overlay batches (screen 0 top, 1 bottom), in submission order. */
+static void draw_overlay_batches(C3D_TexEnv *environment, unsigned screen)
+{
+    for (unsigned b = 0; b < overlay_batch_count; ++b) {
+        const Hle3ds2dBatch *batch = &overlay_batches[b];
+        if (batch->screen != screen) continue;
+        const Hle3dsTexture *texture = NULL;
+        if (batch->state.raster) {
+            if (batch->state.raster >= hle_ram_end || hle_ram_end - batch->state.raster < 0x28u) {
+                ++overlay_texture_omissions;
+                continue;
+            }
+            /* Framebuffer feedback rasters have no sampleable PS2 pixels here.
+               Omit them like the host renderer until feedback is implemented. */
+            if (!gw(batch->state.raster + 0x04u)) {
+                ++overlay_feedback_skipped;
+                continue;
+            }
+            if (!hle_3ds_texture_prepare_2d(batch->state.raster)) {
+                ++overlay_texture_omissions;
+                continue;
+            }
+            texture = hle_3ds_texture_get_2d(batch->state.raster);
+            if (!texture) {
+                ++overlay_texture_omissions;
+                continue;
+            }
+        }
+        if (texture) {
+            C3D_TexSetFilter((C3D_Tex *)&texture->tex,
+                             (batch->state.filter == 2 || batch->state.filter == 4 || batch->state.filter == 6)
+                                 ? GPU_LINEAR : GPU_NEAREST,
+                             (batch->state.filter == 2 || batch->state.filter == 4 || batch->state.filter == 6)
+                                 ? GPU_LINEAR : GPU_NEAREST);
+            const GPU_TEXTURE_WRAP_PARAM wrap_u = batch->state.addr_u == 2 ? GPU_MIRRORED_REPEAT :
+                batch->state.addr_u == 3 || batch->state.addr_u == 4 ? GPU_CLAMP_TO_EDGE : GPU_REPEAT;
+            const GPU_TEXTURE_WRAP_PARAM wrap_v = batch->state.addr_v == 2 ? GPU_MIRRORED_REPEAT :
+                batch->state.addr_v == 3 || batch->state.addr_v == 4 ? GPU_CLAMP_TO_EDGE : GPU_REPEAT;
+            C3D_TexSetWrap((C3D_Tex *)&texture->tex, wrap_u, wrap_v);
+            C3D_TexBind(1, (C3D_Tex *)&texture->tex);
+            C3D_TexEnvSrc(environment, C3D_Both, GPU_TEXTURE1, GPU_PRIMARY_COLOR, 0);
+            C3D_TexEnvFunc(environment, C3D_Both, GPU_MODULATE);
+            for (unsigned i = batch->first; i < batch->first + batch->count; ++i) {
+                Hle3dsVertex *v = &overlay_vertex_buffer[i];
+                v->uv[0] *= texture->uv_scale_u;
+                v->uv[1] *= texture->uv_scale_v;
+            }
+        } else {
+            C3D_TexBind(1, NULL);
+            C3D_TexEnvSrc(environment, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
+            C3D_TexEnvFunc(environment, C3D_Both, GPU_REPLACE);
+        }
+        apply_2d_blend(&batch->state);
+        C3D_DirtyTexEnv(environment);
+        /* The bottom radar panel is the left 240x240 px; the framebuffer is portrait (240 x 320), so screen x is
+           framebuffer y counted from the right edge (fb y = 320 - screen x). */
+        if (batch->radar) C3D_SetScissor(GPU_SCISSOR_NORMAL, 0, 80, 240, 320);
+        C3D_DrawArrays(GPU_TRIANGLES, (int)batch->first, (int)batch->count);
+        if (batch->radar) C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, 0, 0);
+    }
 }
 
 void hle_3ds_gfx_present(void)
@@ -578,11 +698,13 @@ void hle_3ds_gfx_present(void)
         target->uv[1] = source_2d->v;
         target->view_z = 0.0f;
     }
-    for (unsigned i = 0; i < overlay_vertex_count; ++i) {
+    for (unsigned b = 0; b < overlay_batch_count; ++b)
+    for (unsigned i = overlay_batches[b].first; i < overlay_batches[b].first + overlay_batches[b].count; ++i) {
         const RndVtx *source_2d = &overlay_source[i];
         Hle3dsVertex *target = &overlay_vertex_buffer[i];
         hle_3ds_screen_position(source_2d->x, source_2d->y, (float)overlay_screen_width,
                                 (float)overlay_screen_height, 0.5f, target->position);
+        if (overlay_batches[b].screen) target->position[0] *= 320.0f / 400.0f;   /* bottom screen: 320 px wide */
         target->color[0] = colour_255(source_2d->r);
         target->color[1] = colour_255(source_2d->g);
         target->color[2] = colour_255(source_2d->b);
@@ -716,57 +838,13 @@ void hle_3ds_gfx_present(void)
     BufInfo_Init(buffers);
     BufInfo_Add(buffers, overlay_vertex_buffer, sizeof(Hle3dsVertex), 4, 0x3210);
     C3D_SetBufInfo(buffers);
-    for (unsigned b = 0; b < overlay_batch_count; ++b) {
-        const Hle3ds2dBatch *batch = &overlay_batches[b];
-        const Hle3dsTexture *texture = NULL;
-        if (batch->state.raster) {
-            if (batch->state.raster >= hle_ram_end || hle_ram_end - batch->state.raster < 0x28u) {
-                ++overlay_texture_omissions;
-                continue;
-            }
-            /* Framebuffer feedback rasters have no sampleable PS2 pixels here.
-               Omit them like the host renderer until feedback is implemented. */
-            if (!gw(batch->state.raster + 0x04u)) {
-                ++overlay_feedback_skipped;
-                continue;
-            }
-            if (!hle_3ds_texture_prepare_2d(batch->state.raster)) {
-                ++overlay_texture_omissions;
-                continue;
-            }
-            texture = hle_3ds_texture_get_2d(batch->state.raster);
-            if (!texture) {
-                ++overlay_texture_omissions;
-                continue;
-            }
-        }
-        if (texture) {
-            C3D_TexSetFilter((C3D_Tex *)&texture->tex,
-                             (batch->state.filter == 2 || batch->state.filter == 4 || batch->state.filter == 6)
-                                 ? GPU_LINEAR : GPU_NEAREST,
-                             (batch->state.filter == 2 || batch->state.filter == 4 || batch->state.filter == 6)
-                                 ? GPU_LINEAR : GPU_NEAREST);
-            const GPU_TEXTURE_WRAP_PARAM wrap_u = batch->state.addr_u == 2 ? GPU_MIRRORED_REPEAT :
-                batch->state.addr_u == 3 || batch->state.addr_u == 4 ? GPU_CLAMP_TO_EDGE : GPU_REPEAT;
-            const GPU_TEXTURE_WRAP_PARAM wrap_v = batch->state.addr_v == 2 ? GPU_MIRRORED_REPEAT :
-                batch->state.addr_v == 3 || batch->state.addr_v == 4 ? GPU_CLAMP_TO_EDGE : GPU_REPEAT;
-            C3D_TexSetWrap((C3D_Tex *)&texture->tex, wrap_u, wrap_v);
-            C3D_TexBind(1, (C3D_Tex *)&texture->tex);
-            C3D_TexEnvSrc(environment, C3D_Both, GPU_TEXTURE1, GPU_PRIMARY_COLOR, 0);
-            C3D_TexEnvFunc(environment, C3D_Both, GPU_MODULATE);
-            for (unsigned i = batch->first; i < batch->first + batch->count; ++i) {
-                Hle3dsVertex *v = &overlay_vertex_buffer[i];
-                v->uv[0] *= texture->uv_scale_u;
-                v->uv[1] *= texture->uv_scale_v;
-            }
-        } else {
-            C3D_TexBind(1, NULL);
-            C3D_TexEnvSrc(environment, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
-            C3D_TexEnvFunc(environment, C3D_Both, GPU_REPLACE);
-        }
-        apply_2d_blend(&batch->state);
-        C3D_DirtyTexEnv(environment);
-        C3D_DrawArrays(GPU_TRIANGLES, (int)batch->first, (int)batch->count);
+    draw_overlay_batches(environment, 0);
+    if (bottom_active) {
+        /* The dual-screen HUD: cleared every frame, so screens without HUD (cutscenes, menus) leave it black. */
+        C3D_RenderTargetClear(bottom, C3D_CLEAR_ALL, HLE_3DS_RGBA8(0, 0, 0, 0xFF), 0);
+        C3D_FrameDrawOn(bottom);
+        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, projection_uniform, &bottom_projection);
+        draw_overlay_batches(environment, 1);
     }
     if (!overlay_diag_logged && present_count >= (HLE_3DS_CAPTURE_START_FRAME ? HLE_3DS_CAPTURE_START_FRAME : 1680u)) {
         const unsigned limit = overlay_batch_count < 12u ? overlay_batch_count : 12u;
@@ -845,6 +923,7 @@ void hle_3ds_gfx_present(void)
     }
 #endif
     if (present_count % 120 == 0) hle_3ds_texture_report(present_count);
+    if (present_count % 120 == 0) hle_hud_log_bounds(present_count);
     if (present_count <= 12 || present_count % 120 == 0 || overlay_dropped_vertices) {
         LOG("Citro3D 2D overlay frame %u: %u batches, %u vertices, dropped=%u, texture omissions=%u, feedback skipped=%u (%dx%d source)\n",
             present_count, overlay_batch_count, overlay_vertex_count, overlay_dropped_vertices,
@@ -866,7 +945,7 @@ void hle_3ds_gfx_shutdown(void)
 {
     gfx_ready = 0;
     /* Fini waits for queued work and destroys render targets before GPU-backed images/buffers are freed. */
-    if (c3d_initialized) { C3D_Fini(); c3d_initialized=0; top=NULL; }
+    if (c3d_initialized) { C3D_Fini(); c3d_initialized=0; top=NULL; bottom=NULL; bottom_active=0; }
     hle_3ds_texture_shutdown();
     w3d_citro3d_shutdown();
     free(batch_ranges); batch_ranges=NULL;
