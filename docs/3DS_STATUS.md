@@ -410,6 +410,23 @@ pixels by 1 level; bottom screens identical. A first build ended the lighting pr
 whole PICA shader (a called procedure returns after its last instruction): lit objects came out flat fog colour.
 Off by default with GPU clipping; Old mode and hardware not yet checked.
 
+## Audio output path in the emulator (2026-11-17, diagnostics only)
+
+NDSP's `0xd880a7fa` in Azahar is the missing DSP component: libctru reads `sdmc:/3ds/dspfirm.cdc` (normally dumped from
+the console with DSP1). With a 1 KiB placeholder file (zeros and the "DSP1" magic; created only in the private
+emulator profile, not distributable firmware) Azahar's HLE DSP accepts it, NDSP initialises and the full SPU2
+decode/mix path runs instead of the state-only model: about +11 ms per frame (`hle.audio` ~11 ms per iteration),
+so all earlier emulator timings exclude audio mixing that a console with the component pays.
+
+`audio_3ds.c` now logs the NDSP queue every 10 s of produced audio. NDSP consumes in real time (~48 k frames per
+second of system time) and never stalls, but production follows virtual time: before the first main-loop iteration
+(intro, logos, loading: about the first 45 s of virtual time) virtual time is deliberately unpaced and ran about
+2x faster than real time, so ~60% of that audio was dropped for want of a free buffer; in gameplay the game is far
+slower than real time, so the stream will underrun. Expect garbled intro audio and choppy gameplay audio on hardware
+until the frame rate improves or the audio is paced/stretched to real time. The 3DS pacing clock counts from console
+power-on (no origin, unlike the PSP's boot-relative clock); aligning it with virtual time changed nothing measurable
+here (pacing is not reached in either phase), so that change was not kept - check it if x_pace is enabled.
+
 ## Known issues from the pre-publication review (2026-11-15)
 
 * Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a

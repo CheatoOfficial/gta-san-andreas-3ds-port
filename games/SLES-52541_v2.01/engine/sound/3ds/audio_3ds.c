@@ -19,6 +19,7 @@ struct Audio3ds {
     uint64_t last_us;
     uint64_t queued_frames;
     uint64_t dropped_frames;
+    uint64_t reported_blocks;   /* 10 s blocks of produced audio already logged */
     uint64_t disc_errors;
     int started;
     int ndsp_ready;
@@ -86,6 +87,18 @@ static void ndsp_sink(void *user, const int16_t *stereo48, uint32_t frames)
         ndspChnWaveBufAdd(AUDIO_3DS_CHANNEL, wb);
         a->queued_frames += n;
         pos += n;
+    }
+    /* every ~10 s of produced audio: how much reached NDSP (diagnostics; the totals are also logged at exit) */
+    const uint64_t produced = a->queued_frames + a->dropped_frames;
+    if (produced / (10u * SPU2_RATE) != a->reported_blocks) {
+        a->reported_blocks = produced / (10u * SPU2_RATE);
+        unsigned st[4] = {0, 0, 0, 0};
+        for (int i = 0; i < AUDIO_3DS_BUFFERS; ++i) st[a->wave[i].status & 3u]++;
+        if (a->log) a->log(a->log_user, 0, "NDSP audio: queued %llu frames, dropped %llu frames; at %llu ms system time, "
+                           "channel playing %d, buffers free/queued/playing/done %u/%u/%u/%u",
+                           (unsigned long long)a->queued_frames, (unsigned long long)a->dropped_frames,
+                           (unsigned long long)(svcGetSystemTick() / (SYSCLOCK_ARM11 / 1000u)),
+                           (int)ndspChnIsPlaying(AUDIO_3DS_CHANNEL), st[0], st[1], st[2], st[3]);
     }
 }
 
