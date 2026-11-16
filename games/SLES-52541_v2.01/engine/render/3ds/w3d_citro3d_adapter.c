@@ -283,48 +283,68 @@ static float lit_read_weight(const uint8_t *p, unsigned fmt, unsigned index)
     return value;
 }
 
-static uint32_t lit_vertex_colour(const float normal[3], const W3dState *state, const W3dLights *lights)
+/* Material and light-count terms are constant for a conversion call. Preserve the per-vertex
+   arithmetic order below: factoring material into the directional colour changes byte rounding. */
+typedef struct {
+    int enabled, nlights;
+    uint32_t alpha;
+    float diffuse_scale, material[3], base[3];
+    const W3dLights *lights;
+} W3dLitPrepared;
+
+static W3dLitPrepared lit_prepare(const W3dState *state, const W3dLights *lights)
 {
-#if HLE_3DS_LIGHTING_DEBUG
-    (void)normal;
-    (void)state;
-    (void)lights;
-    return 0xFFFFFFFFu;
+    W3dLitPrepared result = {0};
+#if !HLE_3DS_LIGHTING_DEBUG
+    if (state->lights && lights) {
+        result.enabled = 1;
+        result.lights = lights;
+        result.alpha = state->lamb & 0xFF000000u;
+        result.nlights = lights->n;
+        if (result.nlights < 0) result.nlights = 0;
+        if (result.nlights > 4) result.nlights = 4;
+        if (result.nlights > state->lights - 1) result.nlights = state->lights - 1;
+        result.diffuse_scale = (float)((state->lemis >> 8) & 0xFFu) * (1.0f / 255.0f);
+        const float ambient_scale = (float)(state->lemis & 0xFFu) * (1.0f / 255.0f);
+        for (int channel = 0; channel < 3; ++channel) {
+            result.material[channel] = (float)((state->lamb >> (8 * channel)) & 0xFFu) * (1.0f / 255.0f);
+            result.base[channel] = (float)((state->lemit >> (8 * channel)) & 0xFFu) * (1.0f / 255.0f) +
+                                  result.material[channel] * ambient_scale * lights->amb[channel];
+        }
+    }
 #else
-    if (!state->lights || !lights) return 0xFFFFFFFFu;
+    (void)state; (void)lights;
+#endif
+    return result;
+}
+
+static uint32_t lit_vertex_colour(const float normal[3], const W3dLitPrepared *prepared)
+{
+    if (!prepared->enabled) return 0xFFFFFFFFu;
+    const W3dLights *lights = prepared->lights;
     const float normal_length = sqrtf(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
-    uint32_t colour = state->lamb & 0xFF000000u;
-    const unsigned ambient = state->lemis & 0xFFu;
-    const unsigned diffuse = (state->lemis >> 8) & 0xFFu;
-    int nlights = lights->n;
-    if (nlights < 0) nlights = 0;
-    if (nlights > 4) nlights = 4;
-    if (nlights > state->lights - 1) nlights = state->lights - 1;
     const float inverse_length = normal_length > 0.0f ? 1.0f / normal_length : 0.0f;
-    const float diffuse_scale = (float)diffuse * (1.0f / 255.0f);
-    const float ambient_scale = (float)ambient * (1.0f / 255.0f);
     float light_factor[4];
-    for (int light = 0; light < nlights; ++light) {
+    for (int light = 0; light < prepared->nlights; ++light) {
         const float direction = (normal[0] * lights->dir[light][0] + normal[1] * lights->dir[light][1] +
                                  normal[2] * lights->dir[light][2]) * inverse_length;
-        light_factor[light] = direction > 0.0f ? diffuse_scale * direction : 0.0f;
+        light_factor[light] = direction > 0.0f ? prepared->diffuse_scale * direction : 0.0f;
     }
+    uint32_t colour = prepared->alpha;
     for (int channel = 0; channel < 3; ++channel) {
-        const float material = (float)((state->lamb >> (8 * channel)) & 0xFFu) * (1.0f / 255.0f);
-        float value = (float)((state->lemit >> (8 * channel)) & 0xFFu) * (1.0f / 255.0f) +
-                      material * ambient_scale * lights->amb[channel];
-        for (int light = 0; light < nlights; ++light)
-            if (light_factor[light] > 0.0f) value += material * light_factor[light] * lights->col[light][channel];
+        float value = prepared->base[channel];
+        for (int light = 0; light < prepared->nlights; ++light)
+            if (light_factor[light] > 0.0f)
+                value += prepared->material[channel] * light_factor[light] * lights->col[light][channel];
         int component = (int)(value * 255.0f + 0.5f);
         if (component < 0) component = 0;
         if (component > 255) component = 255;
         colour |= (uint32_t)component << (8 * channel);
     }
     return colour;
-#endif
 }
 
-static int lit_vertex(const float world[12], const W3dState *lit_state, const W3dLights *lights,
+static int lit_vertex(const float world[12], const W3dLitPrepared *prepared,
                       int nbones, const float bones[8][12], const W3dLitLayout *layout,
                       const W3dMeshView *mesh, const uint8_t *vertices, uint32_t index, W3dVC *out)
 {
@@ -367,7 +387,7 @@ static int lit_vertex(const float world[12], const W3dState *lit_state, const W3
         world_normal[k] = normal[0] * world[k] + normal[1] * world[3 + k] + normal[2] * world[6 + k];
     out->u = uv[0];
     out->v = uv[1];
-    out->c = lit_vertex_colour(world_normal, lit_state, lights);
+    out->c = lit_vertex_colour(world_normal, prepared);
     out->x = position[0];
     out->y = position[1];
     out->z = position[2];
@@ -400,6 +420,7 @@ int w3d_citro3d_convert_lit_range(const W3dCam *camera, const float world[12], c
     }
     if (required > (uint64_t)output_capacity) return W3D_C3D_ERR_CAPACITY;
 
+    const W3dLitPrepared prepared = lit_prepare(lit_state, lights);
     int written = 0;
     uint32_t vertex_base = 0;
     for (uint32_t i = 0; i < nprims; ++i) {
@@ -411,14 +432,14 @@ int w3d_citro3d_convert_lit_range(const W3dCam *camera, const float world[12], c
         if (prim == 3u) {
             for (uint32_t j = 0; j < output_count; ++j) {
                 W3dVC vertex;
-                if (!lit_vertex(world, lit_state, lights, nbones, bones, &layout, mesh, vertices,
+                if (!lit_vertex(world, &prepared, nbones, bones, &layout, mesh, vertices,
                                 first_vert + vertex_base + j, &vertex)) return W3D_C3D_ERR_UNSUPPORTED_FORMAT;
                 convert_vertex(camera, world, state, &vertex, &output[written++]);
             }
         } else if (input_count <= W3D_C3D_STRIP_CACHE) {
             for (uint32_t j = 0; j < input_count; ++j) {
                 W3dVC vertex;
-                if (!lit_vertex(world, lit_state, lights, nbones, bones, &layout, mesh, vertices,
+                if (!lit_vertex(world, &prepared, nbones, bones, &layout, mesh, vertices,
                                 first_vert + vertex_base + j, &vertex)) return W3D_C3D_ERR_UNSUPPORTED_FORMAT;
                 convert_vertex(camera, world, state, &vertex, &strip_cache[j]);
             }
@@ -434,11 +455,11 @@ int w3d_citro3d_convert_lit_range(const W3dCam *camera, const float world[12], c
                 uint32_t a = j - 2u, b = j - 1u;
                 if ((j - 2u) & 1u) { const uint32_t temporary = a; a = b; b = temporary; }
                 W3dVC va, vb, vc;
-                if (!lit_vertex(world, lit_state, lights, nbones, bones, &layout, mesh, vertices,
+                if (!lit_vertex(world, &prepared, nbones, bones, &layout, mesh, vertices,
                                 first_vert + vertex_base + a, &va) ||
-                    !lit_vertex(world, lit_state, lights, nbones, bones, &layout, mesh, vertices,
+                    !lit_vertex(world, &prepared, nbones, bones, &layout, mesh, vertices,
                                 first_vert + vertex_base + b, &vb) ||
-                    !lit_vertex(world, lit_state, lights, nbones, bones, &layout, mesh, vertices,
+                    !lit_vertex(world, &prepared, nbones, bones, &layout, mesh, vertices,
                                 first_vert + vertex_base + j, &vc)) return W3D_C3D_ERR_UNSUPPORTED_FORMAT;
                 convert_vertex(camera, world, state, &va, &output[written++]);
                 convert_vertex(camera, world, state, &vb, &output[written++]);
