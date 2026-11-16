@@ -5,14 +5,15 @@ Updated 2026-11-16. Read `AGENTS.md` first. This is a source-only handoff.
 ## Current state
 
 Claude merged PR #2 as `e056963` after independent release builds and Old/New Azahar city runs.
-This pass implements the next requested feature on `codex/universal-3ds-runtime`, PR #3: one binary for both consoles.
+PR #3 (universal runtime) is merged as `6fed0a1`. PR #4 (`claude/present-fast-path`) is the open performance base.
+Current continuation: `codex/lit-call-preparation`, PR #5, stacked on PR #4.
 The user authorized suitable private conversion/build workspaces for local full builds and emulator checks.
 The repository remains public; no game data, generated game source, binaries, raw logs or captures belong in git.
 LICENSE and NOTICE.md remain identical to upstream `8cd56bb`.
 Neither console is established as playable. Hardware, physical controls, audio and sustained gameplay remain unverified.
 Saving is disabled by the memory-card configuration and filesystem stubs; this pass does not implement saving.
 
-## Changes for review
+## Universal runtime (merged PR #3)
 
 - `hle_3ds_heaps.c` overrides libctru's weak pre-main allocator for the auto target. It queries remaining process commit
   allowance without libc or services, reserves 32 MiB linear only when at least 88 MiB remains, otherwise 8 MiB, and
@@ -43,8 +44,8 @@ Saving is disabled by the memory-card configuration and filesystem stubs; this p
 
 ## Next work for Claude
 
-1. Review PR #3, especially the pre-main allocation policy, immutable-profile assumption, allocation rollback and GPU teardown.
-   Repeat one auto artifact in both hardware modes and check CI before merging. Keep the forced targets for regression checks.
+1. Review PR #4, then PR #5 and the Codex continuation below. Merge PR #4 before retargeting PR #5 to main.
+   Check current CI and retain the exact-rounding lighting oracle and forced model targets.
 2. Test real Old/New memory and normal release controls. Old-mode Azahar grants roughly 75 MiB normal heap here; a real
    Old launch may grant much less. The synthetic 64 MiB total-budget allocator test is not a hardware-fit test. Compact
    capture runs can have only a few hundred KiB linear headroom; test sustained texture streaming and allocation failures.
@@ -68,6 +69,34 @@ Do it behind a build switch first and compare captures privately with the CPU pa
 
 Smaller leads from the same profile: `hle.memtrap` sampled up to ~20 ms per iteration in busy windows; lit conversion
 (~1.5 us per output vertex in Azahar) recomputes per-call lighting constants per vertex.
+
+## Codex continuation after the present fast path
+
+Independent PR #4 source review found no confirmed defect. A private synthetic harness compiled its actual helpers
+with strict float flags: 100,000 old/new finite classifications agreed, and 11,034 fully-inside triangles preserved
+the clipper's output ordering/attributes. This is host evidence, not PICA/hardware validation.
+
+PR #5 prepares invariant lit-material terms once per conversion call. It preserves the directional arithmetic order,
+all skinning/transform work and all draw/detail policies. No cross-call cache is introduced: every material/light-state
+change gets a fresh prepared value. See `docs/3DS_STATUS.md` for the New-mode comparison (about 10% less lit-conversion
+time, identical workloads, four byte-identical captures). Do not describe this as a 10% total-frame speedup.
+
+Verification: thirteen host executables (including normal/debug exact lighting tests), eleven selected Python tests,
+6,000 existing adapter equivalence cases, and 6,000 extra bitwise comparisons against the immediate pre-change converter.
+ARM11 compilation passes for auto/forced Old/forced New, with the existing posix_memalign nonnull warning. The full
+universal profile and release builds link; the release was not runtime-tested in this pass. All game-derived evidence stays local and private.
+
+The same candidate profile binary ran sequentially in New and Old modes. Each recorded 28 periodic frame lines through
+1,920, zero sampled texture omissions/adapter errors, and no fatal/abort/crash/panic guest-log entries. Old retains its
+existing geometry budget (up to 153 skipped meshes sampled); the fresh frame-1,720 city/HUD capture was inspected.
+Old is a regression run, not a before/after speed comparison. Only the recorded, identity-checked private emulator PIDs
+were stopped. No regular emulator profile or real SD was changed.
+
+Claude: independently review the prepared lighting state/rounding and run the tests, then review both PRs before merging.
+The next larger performance step remains a switchable GPU transform/clip prototype with independent depth/fog probes;
+no production GPU transform was attempted here. Material constants are now prepared, but per-vertex normalisation,
+skinning, transforms, clip checks and strip expansion remain on the CPU. Saving, audio, normal controls, sustained play
+and hardware memory/performance still need work. Preserve private process identity checks during any emulator reruns.
 
 ## Reproduction and ownership
 

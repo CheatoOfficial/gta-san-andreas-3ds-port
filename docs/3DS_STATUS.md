@@ -173,6 +173,41 @@ That is about 33% less present-pass time (1.35 ms per 1,000 vertices). Old mode 
 per-vertex cost, 59 sampled frames, 0 texture omissions. Neither mode logged fatal entries. Frame time is still
 dominated by conversion plus this pass (roughly 150-450 ms per frame in busy scenes), so the game is still not playable.
 
+## Lit material preparation (2026-11-16, PR #5)
+
+The next small CPU improvement prepares material unpacking, ambient/emissive terms and directional-light count once
+per lit conversion call instead of once per vertex. Directional multiplication/addition order is preserved to avoid
+changing rounded colour bytes. Geometry, skinning, primitive expansion, draw budgets and texture detail are unchanged.
+This is stacked on the present fast path from PR #4; it does not move work onto the GPU.
+
+Sequential universal profile builds ran the same scripted route in the same private Azahar New-mode profile.
+Before is `9622a2f` (PR #4); after is `df8376b`. Matching windows had identical static/lit vertex and call counts.
+The timer below covers lit conversion, not total frame time or only lighting arithmetic.
+
+| Lit output vertices / calls per frame | Before | After |
+|---|---:|---:|
+| 53,131 / 243 | 76.2 ms | 68.1 ms |
+| 89,706 / 501 | 138.9 ms | 125.0 ms |
+| 51,071 / 267 | 81.8 ms | 73.7 ms |
+| 44,742 / 244 | 69.4 ms | 62.4 ms |
+
+This is about 10% less lit-conversion time in these windows, not a 10% overall-frame improvement. All four private
+captures at frames 1,360, 1,480, 1,600 and 1,720 are byte-identical to the baseline. The larger conversion/present costs
+still prevent a playability claim. Emulator measurements do not establish real-hardware performance.
+
+An independent bitwise comparison against the pre-change converter passed 3,000 static and 3,000 lit/skinned cases.
+A committed regression oracle exercises 12,000 material/light-state changes, zero normals, null lights, count clamping
+and output colour clipping, with exact colour floats; the lighting-debug path also passes. Game-free tests and native
+ARM11 compilation pass, and full universal profile/release builds link. The release was not runtime-tested in this pass.
+No game data, builds, raw logs or captures are public.
+
+The exact same candidate profile binary ran in New and Old modes, sequentially in isolated profiles. Each run recorded
+28 periodic frame lines through frame 1,920, with zero sampled texture omissions, zero sampled adapter errors and no
+fatal/abort/crash/panic guest-log entries. Old mode retains its existing compact detail/static budget (up to 153 skipped
+meshes sampled); it remains tight on linear memory. Its fresh frame-1,720 capture was inspected locally and renders
+the player, city, minimap and HUD. This is a regression check, not a matched Old-mode speed comparison. No hardware,
+physical controls, audible output, saving or sustained gameplay was validated.
+
 ## Known issues from the pre-publication review (2026-11-15)
 
 * Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a
