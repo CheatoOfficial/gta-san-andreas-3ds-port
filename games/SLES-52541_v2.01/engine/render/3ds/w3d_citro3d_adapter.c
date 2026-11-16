@@ -368,14 +368,14 @@ static uint32_t lit_vertex_colour(const float normal[3], const W3dLitPrepared *p
     return colour;
 }
 
-static int lit_vertex(const float world[12], const W3dLitPrepared *prepared,
-                      int nbones, const float bones[8][12], const W3dLitLayout *layout,
-                      const W3dMeshView *mesh, const uint8_t *vertices, uint32_t index, W3dVC *out)
+/* Decode one lit vertex and apply the skin: object-space position, normal and raw UV. */
+static int lit_decode(int nbones, const float bones[8][12], const W3dLitLayout *layout, const W3dMeshView *mesh,
+                      const uint8_t *vertices, uint32_t index, float position[3], float normal[3], float uv[2])
 {
     if (index >= mesh->nverts) return 0;
     const uint8_t *v = vertices + (size_t)index * mesh->stride;
-    float position[3], normal[3] = {0.0f, 0.0f, 1.0f};
-    float uv[2] = {0.0f, 0.0f};
+    normal[0] = 0.0f; normal[1] = 0.0f; normal[2] = 1.0f;
+    uv[0] = 0.0f; uv[1] = 0.0f;
     for (int i = 0; i < 3; ++i)
         position[i] = lit_read_component(v + layout->position_off, layout->position_fmt, (unsigned)i, 0);
     if (layout->normal_fmt)
@@ -402,10 +402,18 @@ static int lit_vertex(const float world[12], const W3dLitPrepared *prepared,
                                                 normal[2] * matrix[6 + k]);
             }
         }
-        memcpy(position, skinned_position, sizeof(position));
-        memcpy(normal, skinned_normal, sizeof(normal));
+        memcpy(position, skinned_position, 3 * sizeof(float));
+        memcpy(normal, skinned_normal, 3 * sizeof(float));
     }
+    return 1;
+}
 
+static int lit_vertex(const float world[12], const W3dLitPrepared *prepared,
+                      int nbones, const float bones[8][12], const W3dLitLayout *layout,
+                      const W3dMeshView *mesh, const uint8_t *vertices, uint32_t index, W3dVC *out)
+{
+    float position[3], normal[3], uv[2];
+    if (!lit_decode(nbones, bones, layout, mesh, vertices, index, position, normal, uv)) return 0;
     float world_normal[3];
     for (int k = 0; k < 3; ++k)
         world_normal[k] = normal[0] * world[k] + normal[1] * world[3 + k] + normal[2] * world[6 + k];
@@ -418,11 +426,40 @@ static int lit_vertex(const float world[12], const W3dLitPrepared *prepared,
     return 1;
 }
 
-int w3d_citro3d_convert_lit_range(const W3dCam *camera, const float world[12], const W3dState *state,
-                                 const W3dState *lit_state, const W3dLights *lights, int nbones,
-                                 const float bones[8][12], const W3dMeshView *mesh, const uint8_t *verts_override,
-                                 uint32_t first_vert, const uint32_t *prim_words, uint32_t nprims,
-                                 W3dC3dVertex *output, int output_capacity)
+/* One lit vertex into the output: the CPU path (lit colour + convert_vertex), or with gpu set the object-space
+   GPU-lit form (position, normal, final UV), screened through near_row (camera x world: clip z + clip w). */
+typedef struct { const W3dCam *camera; const float *world; const W3dState *state; const W3dLitPrepared *prepared;
+                 int nbones; const float (*bones)[12]; const W3dLitLayout *layout; const W3dMeshView *mesh;
+                 const uint8_t *vertices; int gpu; float near_row[4]; } LitEmit;
+static int lit_emit(const LitEmit *e, uint32_t index, W3dC3dVertex *o)
+{
+    if (!e->gpu) {
+        W3dVC vertex;
+        if (!lit_vertex(e->world, e->prepared, e->nbones, e->bones, e->layout, e->mesh, e->vertices, index, &vertex))
+            return 0;
+        convert_vertex(e->camera, e->world, e->state, &vertex, o);
+        return 1;
+    }
+    float p[3], n[3], uv[2];
+    if (!lit_decode(e->nbones, e->bones, e->layout, e->mesh, e->vertices, index, p, n, uv)) return 0;
+    o->clip[0] = p[0]; o->clip[1] = p[1]; o->clip[2] = p[2]; o->clip[3] = 1.0f;
+    o->color[0] = n[0]; o->color[1] = n[1]; o->color[2] = n[2]; o->color[3] = 0.0f;
+    o->uv[0] = uv[0] * e->state->uscale + e->state->ubase;
+    o->uv[1] = uv[1] * e->state->uscale + e->state->vbase;
+    o->view_z = 0.0f;
+#if HLE_3DS_GPU_CLIP
+    screen_sum += p[0] + p[1] + p[2] + n[0] + n[1] + n[2] + o->uv[0] + o->uv[1];
+    const float near = e->near_row[0] * p[0] + e->near_row[1] * p[1] + e->near_row[2] * p[2] + e->near_row[3];
+    if (!(near >= 0.0f)) screen_behind = 1;
+#endif
+    return 1;
+}
+
+static int lit_range(const W3dCam *camera, const float world[12], const W3dState *state,
+                     const W3dState *lit_state, const W3dLights *lights, int nbones,
+                     const float bones[8][12], const W3dMeshView *mesh, const uint8_t *verts_override,
+                     uint32_t first_vert, const uint32_t *prim_words, uint32_t nprims,
+                     W3dC3dVertex *output, int output_capacity, W3dGpuLight *gpu)
 {
     if (!camera || !world || !state || !lit_state || !mesh || !prim_words || !nprims || nprims > mesh->nprims ||
         !output || output_capacity < 0 || !mesh->nverts || !mesh->stride ||
@@ -445,6 +482,39 @@ int w3d_citro3d_convert_lit_range(const W3dCam *camera, const float world[12], c
     if (required > (uint64_t)output_capacity) return W3D_C3D_ERR_CAPACITY;
 
     const W3dLitPrepared prepared = lit_prepare(lit_state, lights);
+    LitEmit emit = {camera, world, state, &prepared, nbones, bones, &layout, mesh, vertices, gpu != NULL, {0}};
+    if (gpu) {
+        /* near distance = clip z + clip w of camera x world, as a row on the object-space position */
+        const float *m = camera->proj;
+        for (int c = 0; c < 4; ++c) {
+            float v = c == 3 ? m[14] + m[15] : 0.0f;
+            for (int j = 0; j < 3; ++j) v += (m[4 * j + 2] + m[4 * j + 3]) * world[c < 3 ? 3 * c + j : 9 + j];
+            emit.near_row[c] = v;
+        }
+        memcpy(gpu->world, world, sizeof gpu->world);
+        memcpy(gpu->proj, camera->proj, sizeof gpu->proj);
+        memset(gpu->dir, 0, sizeof gpu->dir);
+        memset(gpu->col, 0, sizeof gpu->col);
+        if (prepared.enabled) {
+            for (int c = 0; c < 3; ++c) { gpu->base[c] = prepared.base[c]; gpu->material[c] = prepared.material[c]; }
+            gpu->diffuse = prepared.diffuse_scale;
+            gpu->alpha = (float)(prepared.alpha >> 24) * (1.0f / 255.0f);
+            for (int l = 0; l < prepared.nlights; ++l)
+                for (int c = 0; c < 3; ++c) { gpu->dir[l][c] = lights->dir[l][c]; gpu->col[l][c] = lights->col[l][c]; }
+        } else {
+            for (int c = 0; c < 3; ++c) { gpu->base[c] = 1.0f; gpu->material[c] = 0.0f; }
+            gpu->diffuse = 0.0f;
+            gpu->alpha = 1.0f;
+        }
+        /* convert_vertex's apply_simple_light, after the lit colour */
+        if (state->light && !HLE_3DS_LIGHTING_DEBUG) {
+            for (int c = 0; c < 4; ++c) gpu->post_mul[c] = (float)color_component(state->lamb, c) * (1.0f / 255.0f);
+            for (int c = 0; c < 3; ++c) gpu->post_add[c] = (float)color_component(state->lemis, c) * (1.0f / 255.0f);
+        } else {
+            for (int c = 0; c < 4; ++c) gpu->post_mul[c] = 1.0f;
+            for (int c = 0; c < 3; ++c) gpu->post_add[c] = 0.0f;
+        }
+    }
     int written = 0;
     uint32_t vertex_base = 0;
     for (uint32_t i = 0; i < nprims; ++i) {
@@ -454,19 +524,13 @@ int w3d_citro3d_convert_lit_range(const W3dCam *camera, const float world[12], c
         if ((word >> 24) == 0x0Bu) break;
         const uint32_t prim = (word >> 16) & 7u;
         if (prim == 3u) {
-            for (uint32_t j = 0; j < output_count; ++j) {
-                W3dVC vertex;
-                if (!lit_vertex(world, &prepared, nbones, bones, &layout, mesh, vertices,
-                                first_vert + vertex_base + j, &vertex)) return W3D_C3D_ERR_UNSUPPORTED_FORMAT;
-                convert_vertex(camera, world, state, &vertex, &output[written++]);
-            }
+            for (uint32_t j = 0; j < output_count; ++j)
+                if (!lit_emit(&emit, first_vert + vertex_base + j, &output[written++]))
+                    return W3D_C3D_ERR_UNSUPPORTED_FORMAT;
         } else if (input_count <= W3D_C3D_STRIP_CACHE) {
-            for (uint32_t j = 0; j < input_count; ++j) {
-                W3dVC vertex;
-                if (!lit_vertex(world, &prepared, nbones, bones, &layout, mesh, vertices,
-                                first_vert + vertex_base + j, &vertex)) return W3D_C3D_ERR_UNSUPPORTED_FORMAT;
-                convert_vertex(camera, world, state, &vertex, &strip_cache[j]);
-            }
+            for (uint32_t j = 0; j < input_count; ++j)
+                if (!lit_emit(&emit, first_vert + vertex_base + j, &strip_cache[j]))
+                    return W3D_C3D_ERR_UNSUPPORTED_FORMAT;
             for (uint32_t j = 2; j < input_count; ++j) {
                 uint32_t a = j - 2u, b = j - 1u;
                 if ((j - 2u) & 1u) { const uint32_t temporary = a; a = b; b = temporary; }
@@ -478,19 +542,34 @@ int w3d_citro3d_convert_lit_range(const W3dCam *camera, const float world[12], c
             for (uint32_t j = 2; j < input_count; ++j) {
                 uint32_t a = j - 2u, b = j - 1u;
                 if ((j - 2u) & 1u) { const uint32_t temporary = a; a = b; b = temporary; }
-                W3dVC va, vb, vc;
-                if (!lit_vertex(world, &prepared, nbones, bones, &layout, mesh, vertices,
-                                first_vert + vertex_base + a, &va) ||
-                    !lit_vertex(world, &prepared, nbones, bones, &layout, mesh, vertices,
-                                first_vert + vertex_base + b, &vb) ||
-                    !lit_vertex(world, &prepared, nbones, bones, &layout, mesh, vertices,
-                                first_vert + vertex_base + j, &vc)) return W3D_C3D_ERR_UNSUPPORTED_FORMAT;
-                convert_vertex(camera, world, state, &va, &output[written++]);
-                convert_vertex(camera, world, state, &vb, &output[written++]);
-                convert_vertex(camera, world, state, &vc, &output[written++]);
+                if (!lit_emit(&emit, first_vert + vertex_base + a, &output[written++]) ||
+                    !lit_emit(&emit, first_vert + vertex_base + b, &output[written++]) ||
+                    !lit_emit(&emit, first_vert + vertex_base + j, &output[written++]))
+                    return W3D_C3D_ERR_UNSUPPORTED_FORMAT;
             }
         }
         vertex_base += input_count;
     }
     return written;
+}
+
+int w3d_citro3d_convert_lit_range(const W3dCam *camera, const float world[12], const W3dState *state,
+                                 const W3dState *lit_state, const W3dLights *lights, int nbones,
+                                 const float bones[8][12], const W3dMeshView *mesh, const uint8_t *verts_override,
+                                 uint32_t first_vert, const uint32_t *prim_words, uint32_t nprims,
+                                 W3dC3dVertex *output, int output_capacity)
+{
+    return lit_range(camera, world, state, lit_state, lights, nbones, bones, mesh, verts_override, first_vert,
+                     prim_words, nprims, output, output_capacity, NULL);
+}
+
+int w3d_citro3d_convert_lit_range_gpu(const W3dCam *camera, const float world[12], const W3dState *state,
+                                     const W3dState *lit_state, const W3dLights *lights, int nbones,
+                                     const float bones[8][12], const W3dMeshView *mesh, const uint8_t *verts_override,
+                                     uint32_t first_vert, const uint32_t *prim_words, uint32_t nprims,
+                                     W3dC3dVertex *output, int output_capacity, W3dGpuLight *gpu)
+{
+    if (!gpu) return W3D_C3D_ERR_ARGUMENT;
+    return lit_range(camera, world, state, lit_state, lights, nbones, bones, mesh, verts_override, first_vert,
+                     prim_words, nprims, output, output_capacity, gpu);
 }

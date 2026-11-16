@@ -1,11 +1,26 @@
-; v3 carries the world vertex's view-space z. Per batch, fogparams.xy = (a, b) gives the PS2 fog
-; factor clamp(a*z + b, 0, 1) (2D passes use a = 0, b = 1: no fog). uvscale.xy is the bound
-; texture's padding scale (1 for passes whose UVs are already scaled).
+; World / 2D vertex shader.
+; Pre-transformed vertices (litmode false): v0 = position (clip or screen space), v1 = colour, v2 = UV, v3 = view z.
+; GPU-lit vertices (litmode true, HLE_3DS_GPU_LIGHT): v0 = object-space position (w 1), v1 = object-space normal;
+; projection already includes the camera and world matrices, viewz is the world matrix's z row, nrow its 3x3 rows,
+; and the colour is the adapter's lit formula (base + material * light, byte-rounded) followed by the material step
+; (postadd + colour * postmul, clamped), as w3d_citro3d_adapter.c computes it on the CPU.
+; Per batch, fogparams.xy = (a, b) gives the PS2 fog factor clamp(a*z + b, 0, 1) (2D passes use a = 0, b = 1: no
+; fog). uvscale.xy is the bound texture's padding scale (1 for passes whose UVs are already scaled).
 .fvec projection[4]
 .fvec fogparams
 .fvec uvscale
+.fvec viewz
+.fvec nrow[3]
+.fvec ldir[4]
+.fvec lcol[4]
+.fvec material
+.fvec base
+.fvec options
+.fvec postmul
+.fvec postadd
+.bool litmode
 .constf k(0.99609375, 0.001953125, 0.5, 1.0)
-.constf limits(0.0, 1.0, 0.0, 0.0)
+.constf limits(0.0, 1.0, 255.0, 0.00392156862745098)
 .out outpos position
 .out outclr color
 .out outtc0 texcoord0.st
@@ -20,17 +35,79 @@
  dp4 outpos.x, projection[0], r0
  dp4 outpos.y, projection[1], r0
  dp4 outpos.z, projection[2], r0
- dp4 outpos.w, projection[3], r0
- mov outclr, inclr
+ dp4 r5.w, projection[3], r0
+ mov outpos.w, r5.w
  mul outtc1, uvscale, inuv
- mul r1.x, fogparams.x, inviewz.x
+ ifu litmode
+  dp4 r1.x, viewz, r0
+  call light
+  mov outclr, r4
+ .else
+  mov r1.x, inviewz.x
+  mov outclr, inclr
+ .end
+ mul r1.x, fogparams.x, r1.x
  add r1.x, fogparams.y, r1.x
  max r1.x, limits.x, r1.x
  min r1.x, limits.y, r1.x
  mul r1.x, k.x, r1.x
  add r1.x, k.y, r1.x
- mul outtc0.x, r1.x, inpos.w
- mul outtc0.y, k.z, inpos.w
- mov outtc0.z, inpos.w
+ mul outtc0.x, r1.x, r5.w
+ mul outtc0.y, k.z, r5.w
+ mov outtc0.z, r5.w
  end
+.end
+
+; r4 = lit colour of the normal in inclr (see the header). A called procedure returns after its last instruction:
+; it must not contain END, which would stop the whole shader before the caller writes its outputs.
+.proc light
+ dp3 r2.x, nrow[0], inclr
+ dp3 r2.y, nrow[1], inclr
+ dp3 r2.z, nrow[2], inclr
+ dp3 r3.x, r2, r2
+ cmp limits.xx, lt, lt, r3.xx
+ ifc cmp.x
+  rsq r3.x, r3.x
+ .else
+  mov r3.x, limits.x
+ .end
+ mov r4.xyz, base
+ dp3 r6.x, ldir[0], r2
+ mul r6.x, r6.x, r3.x
+ max r6.x, limits.x, r6.x
+ mul r6.x, options.x, r6.x
+ mul r7.xyz, material, r6.xxx
+ mul r7.xyz, lcol[0], r7
+ add r4.xyz, r4, r7
+ dp3 r6.x, ldir[1], r2
+ mul r6.x, r6.x, r3.x
+ max r6.x, limits.x, r6.x
+ mul r6.x, options.x, r6.x
+ mul r7.xyz, material, r6.xxx
+ mul r7.xyz, lcol[1], r7
+ add r4.xyz, r4, r7
+ dp3 r6.x, ldir[2], r2
+ mul r6.x, r6.x, r3.x
+ max r6.x, limits.x, r6.x
+ mul r6.x, options.x, r6.x
+ mul r7.xyz, material, r6.xxx
+ mul r7.xyz, lcol[2], r7
+ add r4.xyz, r4, r7
+ dp3 r6.x, ldir[3], r2
+ mul r6.x, r6.x, r3.x
+ max r6.x, limits.x, r6.x
+ mul r6.x, options.x, r6.x
+ mul r7.xyz, material, r6.xxx
+ mul r7.xyz, lcol[3], r7
+ add r4.xyz, r4, r7
+ mul r4.xyz, limits.z, r4
+ add r4.xyz, k.z, r4
+ flr r4.xyz, r4
+ max r4.xyz, limits.x, r4
+ min r4.xyz, limits.z, r4
+ mul r4.xyz, limits.w, r4
+ mov r4.w, options.y
+ mul r4, postmul, r4
+ add r4.xyz, postadd, r4
+ min r4, limits.y, r4
 .end

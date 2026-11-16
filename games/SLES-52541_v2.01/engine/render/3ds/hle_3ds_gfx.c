@@ -46,6 +46,9 @@
 #define HLE_3DS_CAPTURE_INTERVAL 120u
 #endif
 /* Prototype: let PICA near-clip raw GE clip coordinates instead of clipping and scaling them on the CPU. */
+#ifndef HLE_3DS_GPU_LIGHT
+#define HLE_3DS_GPU_LIGHT 0
+#endif
 #ifndef HLE_3DS_GPU_CLIP
 #define HLE_3DS_GPU_CLIP 0
 #endif
@@ -86,6 +89,9 @@ static C3D_Mtx display_projection;
 static C3D_Mtx world_projection;
 #endif
 static int projection_uniform = -1, fog_uniform = -1, uv_scale_uniform = -1;
+/* GPU lighting (HLE_3DS_GPU_LIGHT): the shader's lit-batch uniforms */
+static int lit_bool = -1, viewz_uniform = -1, nrow_uniform = -1, ldir_uniform = -1, lcol_uniform = -1;
+static int material_uniform = -1, base_uniform = -1, options_uniform = -1, postmul_uniform = -1, postadd_uniform = -1;
 static Hle3dsVertex *vertex_buffer;
 static Hle3dsVertex *overlay_vertex_buffer;
 static Hle3dsVertex *sky_vertex_buffer;
@@ -212,6 +218,23 @@ int hle_3ds_gfx_init(void)
     projection_uniform = shaderInstanceGetUniformLocation(shader_program.vertexShader, "projection");
     fog_uniform = shaderInstanceGetUniformLocation(shader_program.vertexShader, "fogparams");
     uv_scale_uniform = shaderInstanceGetUniformLocation(shader_program.vertexShader, "uvscale");
+    {
+        shaderInstance_s *vs = shader_program.vertexShader;
+        lit_bool = shaderInstanceGetUniformLocation(vs, "litmode");
+        viewz_uniform = shaderInstanceGetUniformLocation(vs, "viewz");
+        nrow_uniform = shaderInstanceGetUniformLocation(vs, "nrow");
+        ldir_uniform = shaderInstanceGetUniformLocation(vs, "ldir");
+        lcol_uniform = shaderInstanceGetUniformLocation(vs, "lcol");
+        material_uniform = shaderInstanceGetUniformLocation(vs, "material");
+        base_uniform = shaderInstanceGetUniformLocation(vs, "base");
+        options_uniform = shaderInstanceGetUniformLocation(vs, "options");
+        postmul_uniform = shaderInstanceGetUniformLocation(vs, "postmul");
+        postadd_uniform = shaderInstanceGetUniformLocation(vs, "postadd");
+        if (lit_bool < 0 || viewz_uniform < 0 || nrow_uniform < 0 || ldir_uniform < 0 || lcol_uniform < 0 ||
+            material_uniform < 0 || base_uniform < 0 || options_uniform < 0 || postmul_uniform < 0 ||
+            postadd_uniform < 0) goto fail;
+        C3D_BoolUnifSet(GPU_VERTEX_SHADER, lit_bool, false);
+    }
     if (projection_uniform < 0 || fog_uniform < 0 || uv_scale_uniform < 0) goto fail;
     C3D_AttrInfo *attributes = C3D_GetAttrInfo();
     AttrInfo_Init(attributes);
@@ -451,6 +474,47 @@ static inline void write_world_vertex(Hle3dsVertex *o, const float position[4], 
     if (position != v->clip) memcpy(o->position, position, sizeof(o->position));
 }
 
+#if HLE_3DS_GPU_LIGHT
+/* A GPU-lit batch: projection = screen x camera x world, plus the lighting of w3d_citro3d_convert_lit_range_gpu. */
+static int lit_uniforms_active;
+static void set_lit_uniforms(const W3dGpuLight *g)
+{
+    const float *w = g->world, *m = g->proj;
+    /* world rows (model to view): row j = (w[j], w[3 + j], w[6 + j], w[9 + j]) */
+    float wr[3][4];
+    for (int j = 0; j < 3; ++j) { wr[j][0] = w[j]; wr[j][1] = w[3 + j]; wr[j][2] = w[6 + j]; wr[j][3] = w[9 + j]; }
+    C3D_Mtx camera_world, combined;
+    for (int i = 0; i < 4; ++i) {
+        float r[4];
+        for (int c = 0; c < 4; ++c)
+            r[c] = m[i] * wr[0][c] + m[4 + i] * wr[1][c] + m[8 + i] * wr[2][c] + (c == 3 ? m[12 + i] : 0.0f);
+        camera_world.r[i].x = r[0]; camera_world.r[i].y = r[1]; camera_world.r[i].z = r[2]; camera_world.r[i].w = r[3];
+    }
+    Mtx_Multiply(&combined, &world_projection, &camera_world);
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, projection_uniform, &combined);
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, viewz_uniform, wr[2][0], wr[2][1], wr[2][2], wr[2][3]);
+    for (int j = 0; j < 3; ++j)
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, nrow_uniform + j, wr[j][0], wr[j][1], wr[j][2], 0.0f);
+    for (int l = 0; l < 4; ++l) {
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, ldir_uniform + l, g->dir[l][0], g->dir[l][1], g->dir[l][2], 0.0f);
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, lcol_uniform + l, g->col[l][0], g->col[l][1], g->col[l][2], 0.0f);
+    }
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, material_uniform, g->material[0], g->material[1], g->material[2], 0.0f);
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, base_uniform, g->base[0], g->base[1], g->base[2], 0.0f);
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, options_uniform, g->diffuse, g->alpha, 0.0f, 0.0f);
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, postmul_uniform, g->post_mul[0], g->post_mul[1], g->post_mul[2], g->post_mul[3]);
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, postadd_uniform, g->post_add[0], g->post_add[1], g->post_add[2], 0.0f);
+    C3D_BoolUnifSet(GPU_VERTEX_SHADER, lit_bool, true);
+    lit_uniforms_active = 1;
+}
+static void clear_lit_uniforms(void)
+{
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, projection_uniform, &world_projection);
+    C3D_BoolUnifSet(GPU_VERTEX_SHADER, lit_bool, false);
+    lit_uniforms_active = 0;
+}
+#endif
+
 static void set_batch_uniforms(float fog_a, float fog_b, float scale_u, float scale_v)
 {
     C3D_FVUnifSet(GPU_VERTEX_SHADER, fog_uniform, fog_a, fog_b, 0.0f, 0.0f);
@@ -615,6 +679,12 @@ void hle_3ds_gfx_present(void)
                 batch_ranges[b].count = n;
                 continue;
             }
+        }
+        if (batch->gpu_light >= 0) {                     /* no room: GPU-lit vertices are not clip coordinates */
+            capacity_dropped_triangles += batch->vertex_count / 3u;
+            batch_ranges[b].first = output_first;
+            batch_ranges[b].count = 0;
+            continue;
         }
 #endif
         for (unsigned i = batch->first_vertex; i + 2u < source_end; i += 3u) {
@@ -821,8 +891,16 @@ void hle_3ds_gfx_present(void)
         float fog_a, fog_b;
         hle_3ds_fog_linear(batch->state.fog, batch->far_z, batch->fog_z, &fog_a, &fog_b);
         set_batch_uniforms(fog_a, fog_b, texture ? texture->uv_scale_u : 1.0f, texture ? texture->uv_scale_v : 1.0f);
+#if HLE_3DS_GPU_LIGHT
+        const W3dGpuLight *light = w3d_citro3d_frame_gpu_light(batch->gpu_light);
+        if (light) set_lit_uniforms(light);
+        else if (lit_uniforms_active) clear_lit_uniforms();
+#endif
         C3D_DrawArrays(GPU_TRIANGLES, (int)range.first, (int)range.count);
     }
+#if HLE_3DS_GPU_LIGHT
+    if (lit_uniforms_active) clear_lit_uniforms();
+#endif
 
     fog_environment(0, 0);
     set_batch_uniforms(0.0f, 1.0f, 1.0f, 1.0f);
