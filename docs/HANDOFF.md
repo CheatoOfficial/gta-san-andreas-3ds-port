@@ -53,6 +53,22 @@ Saving is disabled by the memory-card configuration and filesystem stubs; this p
 4. Implement and test memory-card save/load support, then validate audio and longer play/streaming. Check texture writes
    that bypass raster lifecycle/unlock hooks if stale images appear. Keep the full 32 MiB guest address window.
 
+## Claude update (2026-11-16)
+
+PR #3 was reviewed and merged as `6fed0a1` after a clean-clone universal release ran in both Azahar modes (Old chose
+compact, New chose full; 0 texture omissions, no fatal entries). Then `claude/present-fast-path` cut the CPU present
+pass by about 33% with identical output; numbers are in `docs/3DS_STATUS.md` ("Present-pass fast path").
+
+Recommended next performance step (larger, not started): move the world transform to the PICA vertex shader. Today the
+CPU computes world x projection, near clip, perspective divide and fog for every triangle vertex, and expands strips to
+three vertices per triangle. Sending object-space positions with a per-batch matrix uniform lets the GPU transform and
+clip (the PICA clips in hardware), and an index buffer avoids strip expansion. Risks to check: GE reversed depth and the
+current OrthoTilt/DepthMap mapping, fog in view space, and per-batch uniform/command-buffer cost for 700+ batches.
+Do it behind a build switch first and compare captures privately with the CPU path. Lit colour could follow later.
+
+Smaller leads from the same profile: `hle.memtrap` sampled up to ~20 ms per iteration in busy windows; lit conversion
+(~1.5 us per output vertex in Azahar) recomputes per-call lighting constants per vertex.
+
 ## Reproduction and ownership
 
 Set PS2RC3DS_WORK to an explicitly authorized private conversion workspace. Do not share cached objects across targets.

@@ -374,6 +374,34 @@ static unsigned clip_triangle_near(const W3dC3dVertex input[3], W3dC3dVertex out
     return count;
 }
 
+/* Exact equivalent of isfinite() on every attribute and near distance of a triangle: x - x is 0 for finite x
+   and NaN for an infinity or NaN, and NaN survives the sum. Needs IEEE semantics (the 3DS build uses
+   -fno-fast-math), and is much cheaper than 36 classification calls per triangle. */
+static int triangle_finite(const W3dC3dVertex v[3])
+{
+    float zero = 0.0f;
+    for (int j = 0; j < 3; ++j) {
+        const float near = near_plane_distance(&v[j]);
+        zero += (v[j].clip[0] - v[j].clip[0]) + (v[j].clip[1] - v[j].clip[1]) +
+                (v[j].clip[2] - v[j].clip[2]) + (v[j].clip[3] - v[j].clip[3]) +
+                (v[j].color[0] - v[j].color[0]) + (v[j].color[1] - v[j].color[1]) +
+                (v[j].color[2] - v[j].color[2]) + (v[j].color[3] - v[j].color[3]) +
+                (v[j].uv[0] - v[j].uv[0]) + (v[j].uv[1] - v[j].uv[1]) +
+                (v[j].view_z - v[j].view_z) + (near - near);
+    }
+    return zero == 0.0f;
+}
+
+static inline void write_world_vertex(Hle3dsVertex *o, const float position[4], const W3dC3dVertex *v,
+                                      const W3dC3dBatch *batch, float scale_u, float scale_v)
+{
+    memcpy(o->position, position, sizeof(o->position));
+    memcpy(o->color, v->color, sizeof(o->color));
+    o->uv[0] = v->uv[0] * scale_u;
+    o->uv[1] = v->uv[1] * scale_v;
+    o->fog = hle_3ds_fog_factor(batch->state.fog, v->view_z, batch->far_z, batch->fog_z);
+}
+
 /* 2D state carries blend factors independently of vertex_alpha. */
 static void apply_2d_blend(const RndState *state)
 {
@@ -457,18 +485,28 @@ void hle_3ds_gfx_present(void)
         unsigned source_end = batch->first_vertex + batch->vertex_count;
         if (source_end > (unsigned)source_count) source_end = (unsigned)source_count;
         const unsigned output_first = (unsigned)output_count;
+        /* Fold the texture's UV scale into the write instead of a second pass over GPU memory. */
+        const Hle3dsTexture *batch_texture = batch->raster ? hle_3ds_texture_get(batch->raster) : NULL;
+        const float scale_u = batch_texture ? batch_texture->uv_scale_u : 1.0f;
+        const float scale_v = batch_texture ? batch_texture->uv_scale_v : 1.0f;
         for (unsigned i = batch->first_vertex; i + 2u < source_end; i += 3u) {
-            W3dC3dVertex triangle[3] = {source[i], source[i + 1u], source[i + 2u]};
-            W3dC3dVertex clipped[4];
-            int finite = 1;
-            for (int j = 0; j < 3; ++j) {
-                for (int k = 0; k < 4; ++k)
-                    if (!isfinite(triangle[j].clip[k]) || !isfinite(triangle[j].color[k])) finite = 0;
-                for (int k = 0; k < 2; ++k)
-                    if (!isfinite(triangle[j].uv[k])) finite = 0;
-                if (!isfinite(triangle[j].view_z) || !isfinite(near_plane_distance(&triangle[j]))) finite = 0;
+            const W3dC3dVertex *in = &source[i];
+            if (!triangle_finite(in)) { ++dropped_w; continue; }
+            if (near_plane_distance(&in[0]) >= 0.0f && near_plane_distance(&in[1]) >= 0.0f &&
+                near_plane_distance(&in[2]) >= 0.0f) {
+                /* Common case: wholly in front of the near plane, so clipping would return the input unchanged. */
+                if (output_count + 3 > W3D_C3D_FRAME_VERTEX_CAPACITY) { ++capacity_dropped_triangles; continue; }
+                float positions[3][4];
+                if (!hle_3ds_homogeneous_position(in[0].clip, positions[0]) ||
+                    !hle_3ds_homogeneous_position(in[1].clip, positions[1]) ||
+                    !hle_3ds_homogeneous_position(in[2].clip, positions[2])) { ++dropped_w; continue; }
+                for (int j = 0; j < 3; ++j)
+                    write_world_vertex(&vertex_buffer[output_count++], positions[j], &in[j], batch, scale_u, scale_v);
+                ++drawn_triangles;
+                continue;
             }
-            if (!finite) { ++dropped_w; continue; }
+            W3dC3dVertex triangle[3] = {in[0], in[1], in[2]};
+            W3dC3dVertex clipped[4];
             int crossed = 0;
             const unsigned clipped_count = clip_triangle_near(triangle, clipped, &crossed);
             if (!clipped_count) {
@@ -490,15 +528,9 @@ void hle_3ds_gfx_present(void)
                     ++dropped_w;
                     continue;
                 }
-                for (int j = 0; j < 3; ++j) {
-                    const W3dC3dVertex *v = fan_vertices[j];
-                    Hle3dsVertex *o = &vertex_buffer[output_count++];
-                    memcpy(o->position, positions[j], sizeof(o->position));
-                    memcpy(o->color, v->color, sizeof(o->color));
-                    o->uv[0] = v->uv[0];
-                    o->uv[1] = v->uv[1];
-                    o->fog = hle_3ds_fog_factor(batch->state.fog, v->view_z, batch->far_z, batch->fog_z);
-                }
+                for (int j = 0; j < 3; ++j)
+                    write_world_vertex(&vertex_buffer[output_count++], positions[j], fan_vertices[j], batch,
+                                       scale_u, scale_v);
                 ++drawn_triangles;
             }
         }
@@ -621,11 +653,7 @@ void hle_3ds_gfx_present(void)
             C3D_TexEnvSrc(environment, C3D_Both, GPU_TEXTURE1, GPU_PRIMARY_COLOR, 0);
             C3D_TexEnvFunc(environment, C3D_Both, GPU_MODULATE);
 #endif
-            const float su = texture->uv_scale_u, sv = texture->uv_scale_v;
-            for (unsigned i = range.first; i < range.first + range.count; ++i) {
-                vertex_buffer[i].uv[0] *= su;
-                vertex_buffer[i].uv[1] *= sv;
-            }
+            /* UVs were already scaled for this texture when the batch's vertices were written. */
         } else {
             C3D_TexBind(1, NULL);
             C3D_TexEnvSrc(environment, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
