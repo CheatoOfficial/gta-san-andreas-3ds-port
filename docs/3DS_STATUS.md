@@ -233,6 +233,42 @@ most 6 pixels by 1 level. Both modes: 28 periodic frame lines, 0 texture omissio
 Old kept its existing geometry budget skips. The busiest window is still ~337 ms per frame; lit conversion (125 ms) is
 now the largest renderer cost. Azahar only: real PICA clipping/precision is unverified.
 
+## GPU fog crossing correction (2026-11-16, PR #7)
+
+Review of PR #6 found a fog mismatch at generated near-plane vertices. The reference CPU path clips first, then
+computes visibility from the new view-space Z. The shader emits `(0.99609375 * visibility + 0.001953125) * W` and a
+projective Q of W. Interpolating those shader outputs during GPU clipping does not reproduce evaluating fog at the
+intersection. The [Azahar software clipper](https://github.com/azahar-emu/azahar/blob/master/src/video_core/renderer_software/sw_rasterizer.cpp)
+models interpolation of both texture coordinates and projective W before perspective division; this is not hardware proof.
+
+A synthetic, non-degenerate positive-W triangle demonstrates the difference: near=.1, vertex depths .05 and 100,
+fog range 50..100. At the near intersection the reference visibility is 1, while pre-clipped projective coordinates
+yield roughly .5. Existing short-route captures need not expose this larger-fog-gradient case.
+
+PR #7 CPU-clips only fogged triangles crossing the near plane, then recomputes fog on generated vertices and submits
+raw clip coordinates. All other triangles retain the prototype GPU path. The reference clipper is shared with host
+regressions; default CPU rendering and the off-by-default prototype switch are preserved. Far-plane clipping still
+differs from the reference's clamp, and real PICA behaviour remains unverified. Near-clipped/rejected diagnostics in
+the prototype count CPU fallback work, not all GPU clipping or final GPU-generated triangles.
+
+Fourteen host executables, eleven selected Python tests and 6,000 adapter-equivalence cases pass. The new synthetic
+test covers all crossing masks, signed-zero boundaries, the projective fog counterexample and unchanged inside
+vertices. Native ARM11 compilation passes with GPU clipping off/on for all three targets. Full on/off profile builds
+and the default release build link; release execution was not tested in this pass.
+
+The same fixed prototype binary ran in isolated Old/New Azahar modes concurrently. New recorded 30 periodic frame
+lines through 2,160; Old recorded 32 through 2,400. Both have zero sampled texture omissions/adapter errors and no
+fatal/abort/crash/panic guest-log entries. Both exercised 11 CPU fog crossings at sampled frame 1,920 and produced
+fresh captures at 1,900, 1,910, 1,920 and 1,930. These are correctness checks; the earlier PR #6 speed numbers predate
+this fallback, and this pass does not claim a new matched performance result. All game-derived evidence remains private.
+
+A fresh New-mode CPU-reference run recorded 31 periodic frame lines through 2,280, with zero sampled texture
+omissions/adapter errors and no fatal/crash entries. Its four near-crossing captures match the previous reference
+byte-for-byte, supporting that the shared-clipper extraction preserved default rendering in these frames.
+Compared with this fresh reference, the fixed prototype differs in 3, 0, 8 and 1 pixels at frames 1,900, 1,910,
+1,920 and 1,930 respectively; maximum channel delta is one level. The near-camera wall/player/HUD frame was inspected
+privately. This limited route comparison does not replace the synthetic fog-gradient regression or hardware validation.
+
 ## Known issues from the pre-publication review (2026-11-15)
 
 * Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a
