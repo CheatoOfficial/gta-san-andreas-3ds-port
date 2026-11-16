@@ -22,6 +22,8 @@ for MODEL in 0 1 2; do
   for SRC in "$REPO"/hle/3ds/*.c "$R"/3ds/*.c "$S"/3ds/*.c; do
     arm-none-eabi-gcc "${FLAGS[@]}" "-DHLE_3DS_OLD_MODEL=$OLD" "-DHLE_3DS_AUTO_MODEL=$AUTO" -c "$SRC" -o "$OUT/$(basename "$SRC").o"
   done
+  arm-none-eabi-gcc "${FLAGS[@]}" "-DHLE_3DS_OLD_MODEL=$OLD" "-DHLE_3DS_AUTO_MODEL=$AUTO" -DHLE_3DS_GPU_CLIP=1 \
+    -c "$R/3ds/hle_3ds_gfx.c" -o "$OUT/hle_3ds_gfx_gpu_clip.o"
   arm-none-eabi-gcc -march=armv6k -mfloat-abi=hard -c "$REPO/hle/3ds/hle_ctx.S" -o "$OUT/hle_ctx.o"
   echo "PASS native ARM11 compile: old_model=$OLD auto_model=$AUTO (no game data)"
 done

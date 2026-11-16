@@ -15,6 +15,21 @@ static inline int hle_3ds_homogeneous_position(const float clip[4], float out[4]
     for (int i = 0; i < 4; ++i) if (!isfinite(out[i])) return 0;
     return 1;
 }
+/* GPU-clip prototype (HLE_3DS_GPU_CLIP): row-major matrix that the vertex shader applies to raw GE clip
+   coordinates before the OrthoTilt projection. X, Y and W match hle_3ds_homogeneous_position(). Depth is
+   flipped to z' = (w - z) / 2 so the GE near plane (z = -w) lands on OrthoTilt clip z = 0, the plane
+   PICA clips in hardware; DepthMap(1, 1) then restores GE reversed window depth (near 1, far 0).
+   Unlike the CPU path, geometry beyond the GE far plane is clipped by the GPU instead of clamped. */
+static inline void hle_3ds_gpu_clip_rows(float m[4][4])
+{
+    static const float rows[4][4] = {
+        {200.0f, 0.0f, 0.0f, 200.0f},
+        {0.0f, 120.0f, 0.0f, 120.0f},
+        {0.0f, 0.0f, -0.5f, 0.5f},
+        {0.0f, 0.0f, 0.0f, 1.0f},
+    };
+    for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) m[r][c] = rows[r][c];
+}
 /* RndVtx coordinates start at the top left; OrthoTilt's screen Y points up. */
 static inline void hle_3ds_screen_position(float x, float y, float width, float height,
                                            float depth, float out[4])

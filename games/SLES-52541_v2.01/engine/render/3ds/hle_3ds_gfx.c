@@ -8,6 +8,7 @@
 #include "hle.h"
 #include "hle_3ds_gfx.h"
 #include "hle_3ds_homogeneous.h"
+#include "hle_3ds_world_clip.h"
 #include "hle_3ds_fog.h"
 #include "hle_3ds_texture.h"
 #include "hle_render.h"
@@ -42,6 +43,10 @@
 #ifndef HLE_3DS_CAPTURE_INTERVAL
 #define HLE_3DS_CAPTURE_INTERVAL 120u
 #endif
+/* Prototype: let PICA near-clip raw GE clip coordinates instead of clipping and scaling them on the CPU. */
+#ifndef HLE_3DS_GPU_CLIP
+#define HLE_3DS_GPU_CLIP 0
+#endif
 #ifndef HLE_3DS_CMDBUF_SIZE
 #define HLE_3DS_CMDBUF_SIZE (C3D_DEFAULT_CMDBUF_SIZE * 4u)
 #endif
@@ -64,6 +69,9 @@ static int fog_ramp_ready;
 static DVLB_s *shader_dvlb;
 static shaderProgram_s shader_program;
 static C3D_Mtx display_projection;
+#if HLE_3DS_GPU_CLIP
+static C3D_Mtx world_projection;
+#endif
 static int projection_uniform = -1;
 static Hle3dsVertex *vertex_buffer;
 static Hle3dsVertex *overlay_vertex_buffer;
@@ -212,6 +220,22 @@ int hle_3ds_gfx_init(void)
     C3D_TexEnvSrc(environment, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
     C3D_TexEnvFunc(environment, C3D_Both, GPU_REPLACE);
     Mtx_OrthoTilt(&display_projection, 0.0f, 400.0f, 0.0f, 240.0f, 0.0f, 1.0f, true);
+#if HLE_3DS_GPU_CLIP
+    {
+        float rows[4][4];
+        C3D_Mtx clip_to_screen;
+        hle_3ds_gpu_clip_rows(rows);
+        Mtx_Zeros(&clip_to_screen);
+        for (int r = 0; r < 4; ++r) {
+            clip_to_screen.r[r].x = rows[r][0];
+            clip_to_screen.r[r].y = rows[r][1];
+            clip_to_screen.r[r].z = rows[r][2];
+            clip_to_screen.r[r].w = rows[r][3];
+        }
+        Mtx_Multiply(&world_projection, &display_projection, &clip_to_screen);
+        LOG("Citro3D GPU clip prototype enabled\n");
+    }
+#endif
     gfx_ready = 1;
     w3d_citro3d_frame_reset();
     return 1;
@@ -333,47 +357,6 @@ static float colour_255(float value)
     return fminf(1.0f, fmaxf(0.0f, value * (1.0f / 255.0f)));
 }
 
-/* The host renderer clips against the PS2 GE near plane before dividing by W.
-   This 3DS path converts to screen coordinates on the CPU, so PICA cannot do
-   that clip afterward. Preserve homogeneous attributes until this step ends. */
-static float near_plane_distance(const W3dC3dVertex *vertex)
-{
-    return vertex->clip[2] + vertex->clip[3];
-}
-
-static void interpolate_clip_vertex(const W3dC3dVertex *a, const W3dC3dVertex *b,
-                                   float t, W3dC3dVertex *out)
-{
-    for (int i = 0; i < 4; ++i) out->clip[i] = a->clip[i] + (b->clip[i] - a->clip[i]) * t;
-    for (int i = 0; i < 4; ++i) out->color[i] = a->color[i] + (b->color[i] - a->color[i]) * t;
-    for (int i = 0; i < 2; ++i) out->uv[i] = a->uv[i] + (b->uv[i] - a->uv[i]) * t;
-    out->view_z = a->view_z + (b->view_z - a->view_z) * t;
-    out->clip[2] = -out->clip[3];
-}
-
-static unsigned clip_triangle_near(const W3dC3dVertex input[3], W3dC3dVertex output[4], int *crossed)
-{
-    unsigned count = 0;
-    int inside_count = 0;
-    for (int i = 0; i < 3; ++i)
-        inside_count += near_plane_distance(&input[i]) >= 0.0f;
-    *crossed = inside_count != 0 && inside_count != 3;
-    if (!inside_count) return 0;
-
-    for (int i = 0; i < 3; ++i) {
-        const W3dC3dVertex *a = &input[i];
-        const W3dC3dVertex *b = &input[(i + 1) % 3];
-        const float da = near_plane_distance(a), db = near_plane_distance(b);
-        const int a_inside = da >= 0.0f, b_inside = db >= 0.0f;
-        if (a_inside) output[count++] = *a;
-        if (a_inside != b_inside) {
-            const float t = da / (da - db);
-            interpolate_clip_vertex(a, b, t, &output[count++]);
-        }
-    }
-    return count;
-}
-
 /* Exact equivalent of isfinite() on every attribute and near distance of a triangle: x - x is 0 for finite x
    and NaN for an infinity or NaN, and NaN survives the sum. Needs IEEE semantics (the 3DS build uses
    -fno-fast-math), and is much cheaper than 36 classification calls per triangle. */
@@ -492,9 +475,21 @@ void hle_3ds_gfx_present(void)
         for (unsigned i = batch->first_vertex; i + 2u < source_end; i += 3u) {
             const W3dC3dVertex *in = &source[i];
             if (!triangle_finite(in)) { ++dropped_w; continue; }
+#if HLE_3DS_GPU_CLIP
+            /* Fog is a projective texture coordinate built from fog(view_z)*W in the shader.
+               GPU-generated near intersections cannot recompute it. Preserve CPU fog there. */
+            if (!gpu_fog_needs_cpu_clip(batch->state.fog, near_plane_distance(&in[0]),
+                                       near_plane_distance(&in[1]), near_plane_distance(&in[2]))) {
+                if (output_count + 3 > W3D_C3D_FRAME_VERTEX_CAPACITY) { ++capacity_dropped_triangles; continue; }
+                for (int j = 0; j < 3; ++j)
+                    write_world_vertex(&vertex_buffer[output_count++], in[j].clip, &in[j], batch, scale_u, scale_v);
+                ++drawn_triangles;
+                continue;
+            }
+#else
             if (near_plane_distance(&in[0]) >= 0.0f && near_plane_distance(&in[1]) >= 0.0f &&
                 near_plane_distance(&in[2]) >= 0.0f) {
-                /* Common case: wholly in front of the near plane, so clipping would return the input unchanged. */
+                /* Common case: wholly in front of the near plane. */
                 if (output_count + 3 > W3D_C3D_FRAME_VERTEX_CAPACITY) { ++capacity_dropped_triangles; continue; }
                 float positions[3][4];
                 if (!hle_3ds_homogeneous_position(in[0].clip, positions[0]) ||
@@ -505,6 +500,7 @@ void hle_3ds_gfx_present(void)
                 ++drawn_triangles;
                 continue;
             }
+#endif
             W3dC3dVertex triangle[3] = {in[0], in[1], in[2]};
             W3dC3dVertex clipped[4];
             int crossed = 0;
@@ -528,9 +524,15 @@ void hle_3ds_gfx_present(void)
                     ++dropped_w;
                     continue;
                 }
-                for (int j = 0; j < 3; ++j)
-                    write_world_vertex(&vertex_buffer[output_count++], positions[j], fan_vertices[j], batch,
+                for (int j = 0; j < 3; ++j) {
+#if HLE_3DS_GPU_CLIP
+                    const float *position = fan_vertices[j]->clip;
+#else
+                    const float *position = positions[j];
+#endif
+                    write_world_vertex(&vertex_buffer[output_count++], position, fan_vertices[j], batch,
                                        scale_u, scale_v);
+                }
                 ++drawn_triangles;
             }
         }
@@ -598,6 +600,10 @@ void hle_3ds_gfx_present(void)
     /* Init/Add mutate the descriptor; Set marks the new binding dirty after
        the preceding draw consumed GetBufInfo's original dirty flag. */
     C3D_SetBufInfo(buffers);
+#if HLE_3DS_GPU_CLIP
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, projection_uniform, &world_projection);
+    C3D_DepthMap(true, 1.0f, 1.0f);
+#endif
     for (int b = 0; b < batch_count; ++b) {
         const W3dC3dBatch *batch = &batches[b];
         const Hle3dsBatchRange range = batch_ranges[b];
@@ -670,6 +676,10 @@ void hle_3ds_gfx_present(void)
     }
 
     fog_environment(0, 0);
+#if HLE_3DS_GPU_CLIP
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, projection_uniform, &display_projection);
+    C3D_DepthMap(true, -1.0f, 0.0f);
+#endif
     C3D_CullFace(GPU_CULL_NONE);
     C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_COLOR);
     C3D_AlphaTest(false, GPU_GREATER, 0);

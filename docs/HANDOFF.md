@@ -6,7 +6,8 @@ Updated 2026-11-16. Read `AGENTS.md` first. This is a source-only handoff.
 
 Claude merged PR #2 as `e056963` after independent release builds and Old/New Azahar city runs.
 PR #3 (universal runtime) is merged as `6fed0a1`. PR #4 (`claude/present-fast-path`) is the open performance base.
-Current continuation: `codex/lit-call-preparation`, PR #5, stacked on PR #4.
+Then `codex/lit-call-preparation`, PR #5, stacked on PR #4; Claude reviewed it (no defect found).
+Current continuation: `claude/gpu-clip-prototype`, PR #6, stacked on PR #5 (switch off by default).
 The user authorized suitable private conversion/build workspaces for local full builds and emulator checks.
 The repository remains public; no game data, generated game source, binaries, raw logs or captures belong in git.
 LICENSE and NOTICE.md remain identical to upstream `8cd56bb`.
@@ -44,8 +45,9 @@ Saving is disabled by the memory-card configuration and filesystem stubs; this p
 
 ## Next work for Claude
 
-1. Review PR #4, then PR #5 and the Codex continuation below. Merge PR #4 before retargeting PR #5 to main.
-   Check current CI and retain the exact-rounding lighting oracle and forced model targets.
+1. Review PR #7 and incorporate the fog correction into PR #6 before considering default enablement.
+   Land #4 then #5, retarget/review #6 with the correction, and keep GPU clipping off pending its remaining checks.
+   Check current CI and retain the lighting/fog regressions and forced model targets.
 2. Test real Old/New memory and normal release controls. Old-mode Azahar grants roughly 75 MiB normal heap here; a real
    Old launch may grant much less. The synthetic 64 MiB total-budget allocator test is not a hardware-fit test. Compact
    capture runs can have only a few hundred KiB linear headroom; test sustained texture streaming and allocation failures.
@@ -97,6 +99,58 @@ The next larger performance step remains a switchable GPU transform/clip prototy
 no production GPU transform was attempted here. Material constants are now prepared, but per-vertex normalisation,
 skinning, transforms, clip checks and strip expansion remain on the CPU. Saving, audio, normal controls, sustained play
 and hardware memory/performance still need work. Preserve private process identity checks during any emulator reruns.
+
+## Claude: GPU near-clip prototype (PR #6, stacked on PR #5)
+
+Claude reviewed PR #5 (same expression order, debug/null-light paths unchanged; full tests pass; the adapter
+equivalence rounding count is identical to PR #4's: 537,190). Merging #4/#5 was blocked by Claude's permission mode,
+so the user merges them.
+
+`claude/gpu-clip-prototype` adds `HLE_3DS_GPU_CLIP` (default 0): world vertices go to PICA as raw clip coordinates and
+the GPU does the near clip. In Azahar it cut present-pass time ~54% in both modes with near-identical captures,
+including a frame with 11 near-plane crossings (numbers in `docs/3DS_STATUS.md`). Before making it the default:
+review the depth/clip derivation in `hle_3ds_homogeneous.h`, and accept that beyond-far geometry is clipped, not
+clamped. Real PICA clipping behaviour still needs hardware evidence.
+
+Next steps, in order of measured cost on the busy window (~337 ms/frame with the switch on):
+1. Lit conversion (~125 ms, ~1.4 us per output vertex): normalisation, skinning and strip expansion on the CPU.
+   Candidates: compute lighting in the vertex shader from object-space normals, or cache per-input-vertex results.
+2. Present pass (~67 ms): make it zero-copy. The adapter could write `Hle3dsVertex` straight into a double-buffered
+   linear buffer, with fog and UV scale as per-batch shader uniforms. Linear memory is tight on Old (8 MiB).
+3. Game-side time between presents not explained by conversion (~120 ms).
+
+## Codex: fogged near crossings (PR #7, stacked on #6)
+
+Found a confirmed source/math mismatch: PR #6 computes fog before clipping, but the reference computes it at generated
+vertices. Because the shader builds projective coordinates from visibility(view_z)*W, interpolation can give roughly
+half visibility at a near-plane edge where the reference gives full visibility. The new synthetic regression uses
+positive W and non-degenerate side-plane-inside geometry; no game input is required to reproduce the calculation.
+See `docs/3DS_STATUS.md` for the formula, limits and emulator observations.
+
+Fogged crossing triangles now share the reference CPU clipper, recompute fog and pass raw clip coordinates through
+the GPU projection. Non-crossing and unfogged triangles stay on the GPU path. No default switch, depth mapping, shader,
+texture policy or buffer budget changed. The prototype's far-plane/clamp difference remains open. Its clipping counters
+now describe CPU fallback work; GPU submissions are not a count of final post-hardware-clipping triangles.
+
+Verification: fourteen host executables, eleven selected Python tests, 6,000 adapter cases; native ARM compilation
+with off/on GPU paths for all targets; full on/off profile and default release links. The same on binary ran in both
+isolated emulator modes concurrently, with zero sampled texture omissions/adapter errors, no fatal/crash entries,
+and 11 CPU fallback crossings at frame 1,920 in each mode. Fresh captures target 1,900..1,930 using an ignored build
+script copy; public capture defaults are unchanged. No hardware, release controls, audio or saving was tested.
+The old performance table predates this fix. Run a separate matched benchmark before asserting its exact speedup.
+
+A fresh New-mode CPU-reference run also completed the four near captures. They match the previous CPU reference
+byte-for-byte. Fixed prototype vs fresh reference: 3/0/8/1 changed pixels at 1,900/1,910/1,920/1,930; maximum channel
+delta one. The near-camera wall at 1,920 was inspected privately. The reference log has zero sampled texture
+omissions/adapter errors and no fatal/crash entries. These are limited scene checks; the extreme fog-gradient issue
+is established by the synthetic shader-coordinate case. All owned emulator processes were stopped after verifying
+recorded PID/path/start time. No normal emulator profile or physical SD was changed.
+
+Claude: review the crossing predicate, the unchanged reference clipping/interpolation, fan capacity checks, and raw
+coordinates after CPU fog generation. Keep the prototype off by default. Repeat a game-free synthetic GPU fog probe
+on real hardware if possible, then boundary/depth/far-geometry tests before enabling it. GPU lighting/caching and
+zero-copy work are still next performance candidates; this pass focused on correctness of the proposed clipping path.
+All private processes must be stopped by verified recorded identity, not by executable name.
 
 ## Reproduction and ownership
 
