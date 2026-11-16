@@ -1,6 +1,7 @@
 /* Citro3D implementation of the PS2RC world-backend interface. The adapter decodes PS2 meshes and lighting into
  * frame batches; this file binds the cached textures and maps render state to PICA. GE segment lists remain unsupported. */
 #include "w3d_citro3d_backend.h"
+#include "w3d_citro3d_depth.h"
 #include "hle_w3d_me.h"
 #include "hle_3ds_gfx.h"
 #include "hle_3ds_texture.h"
@@ -34,6 +35,13 @@ static unsigned frame_vertex_count, scratch_used;
 #define W3D_C3D_STATIC_VERT_BUDGET (hle_3ds_active_profile->static_budget) /* 0 = unlimited */
 #endif
 static unsigned frame_static_verts, budget_skipped;
+/* Distance priority for the static budget (w3d_citro3d_depth.h): estimated vertices of this frame's static draw
+   attempts per depth band, the cut band chosen from the previous frame, and the fog limit that hides it. */
+static uint32_t static_band_estimate[W3D_C3D_DEPTH_BANDS];
+static uint64_t static_estimated_drawn, static_written_drawn;   /* calibration of the estimate, this frame */
+static uint64_t cut_band_allowance, cut_band_used;
+static unsigned static_cut_band = W3D_C3D_DEPTH_BANDS, distance_skipped;
+static float fog_far_limit = W3D_C3D_FOG_UNLIMITED;
 static unsigned frame_batch_count;
 static unsigned skipped_textures, simplified_states, skipped_segments, skipped_meshes;
 static int current_bone_count;
@@ -80,6 +88,13 @@ static void record_batch(unsigned first_vertex, unsigned vertex_count, unsigned 
     batch->state = current_draw_state;
     batch->far_z = current_camera.far_z;
     batch->fog_z = current_camera.fog_z;
+    if (fog_far_limit < batch->far_z) {          /* fade out at the static distance cut instead of popping */
+        /* Never pull full fog nearer than W3D_C3D_FOG_FLOOR_M: a dense compact-profile scene can cut at 40 m,
+           and fog that close turns the street into a wall. Between the cut and the floor, meshes just stop. */
+        const float floor_z = batch->fog_z + 20.0f > W3D_C3D_FOG_FLOOR_M ? batch->fog_z + 20.0f : W3D_C3D_FOG_FLOOR_M;
+        batch->far_z = fog_far_limit > floor_z ? fog_far_limit : floor_z;
+        if (batch->far_z > current_camera.far_z) batch->far_z = current_camera.far_z;
+    }
     batch->screen = screen;
 }
 
@@ -104,6 +119,13 @@ void w3d_citro3d_frame_reset(void)
     if (!w3d_citro3d_init()) { frame_error=-1; return; }
     frame_vertex_count = 0;
     frame_static_verts = 0;
+    static_cut_band = w3d_citro3d_static_cut_band(static_band_estimate,
+        w3d_citro3d_estimate_budget(W3D_C3D_STATIC_VERT_BUDGET, static_estimated_drawn, static_written_drawn),
+        &cut_band_allowance);
+    cut_band_used = 0;
+    static_estimated_drawn = static_written_drawn = 0;
+    fog_far_limit = w3d_citro3d_fog_limit_step(fog_far_limit, static_cut_band, current_camera.far_z);
+    memset(static_band_estimate, 0, sizeof static_band_estimate);
     frame_batch_count = 0;
     scratch_used = 0;
     skipped_textures = simplified_states = skipped_segments = skipped_meshes = 0;
@@ -119,6 +141,14 @@ const W3dC3dBatch *w3d_citro3d_frame_batches(void) { return frame_batches; }
 int w3d_citro3d_frame_batch_count(void) { return (int)frame_batch_count; }
 int w3d_citro3d_frame_error(void) { return frame_error; }
 static uint64_t conv_ticks[2], conv_verts[2], conv_calls[2];
+void w3d_citro3d_log_static_cut(unsigned frames)
+{
+    LOG("Citro3D static distance cut (%u frames, per frame): %u meshes skipped, cut now %s%u m, fog limit %.0f m\n",
+        frames, distance_skipped / frames, static_cut_band < W3D_C3D_DEPTH_BANDS ? "" : "none ",
+        static_cut_band < W3D_C3D_DEPTH_BANDS ? (unsigned)(static_cut_band * W3D_C3D_DEPTH_BAND_M) : 0u,
+        fog_far_limit < W3D_C3D_FOG_UNLIMITED ? fog_far_limit : 0.0f);
+    distance_skipped = 0;
+}
 void w3d_citro3d_take_conv_stats(uint64_t ticks[2], uint64_t verts[2], uint64_t calls[2])
 {
     for (int i = 0; i < 2; ++i) { ticks[i] = conv_ticks[i]; verts[i] = conv_verts[i]; calls[i] = conv_calls[i]; conv_ticks[i] = conv_verts[i] = conv_calls[i] = 0; }
@@ -204,6 +234,20 @@ void w3d_be_range(const W3dMeshView *mesh, const uint8_t *verts_override, uint32
         return;
     }
     const int is_lit = mesh && mesh->fmt == W3D_FMT_LIT;
+    uint64_t static_estimate = 0;
+    if (W3D_C3D_STATIC_VERT_BUDGET && !is_lit && mesh) {
+        /* Every attempt counts toward next frame's cut, drawn or not; nprims/nprims of the mesh estimates a range. */
+        const unsigned band = w3d_citro3d_depth_band(current_world[11]);
+        const uint64_t estimate = mesh->nprims && nprims < mesh->nprims
+            ? (uint64_t)mesh->ntris * 3u * nprims / mesh->nprims : (uint64_t)mesh->ntris * 3u;
+        static_band_estimate[band] += estimate > UINT32_MAX - static_band_estimate[band]
+            ? UINT32_MAX - static_band_estimate[band] : (uint32_t)estimate;
+        static_estimate = estimate;
+        if (!w3d_citro3d_static_admit(band, static_cut_band, estimate, cut_band_allowance, &cut_band_used)) {
+            ++distance_skipped;
+            return;
+        }
+    }
     if (W3D_C3D_STATIC_VERT_BUDGET && !is_lit && frame_static_verts >= W3D_C3D_STATIC_VERT_BUDGET) {
         ++budget_skipped;
         return;
@@ -223,6 +267,7 @@ void w3d_be_range(const W3dMeshView *mesh, const uint8_t *verts_override, uint32
                                         first_vert, prims, nprims, out, cap);
     conv_ticks[is_lit] += svcGetSystemTick() - conv_t0;
     if (written > 0) { conv_verts[is_lit] += (uint64_t)written; ++conv_calls[is_lit]; if (!is_lit) frame_static_verts += (unsigned)written; }
+    if (written > 0 && static_estimate) { static_estimated_drawn += static_estimate; static_written_drawn += (uint64_t)written; }
     if (written < 0) {
         frame_vertex_count = frame_start;
         if (written == -3 || written == -4 || written == -5) {

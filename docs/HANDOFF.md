@@ -251,3 +251,15 @@ Suggested next steps, in order:
    fog and depth look right on a real console, consider making `HLE_3DS_GPU_CLIP=1` the default.
 2. Remaining CPU renderer cost in the busiest window: lit conversion ~128 ms (directional lighting ~30 ms of it; the
    GPU lighting probe is ready), static ~17 ms, world state/draws ~14 ms for ~600 batches, game side ~130 ms.
+
+## Claude: static budget distance priority (2026-11-16, branch claude/distance-cut, stacked on #8)
+
+The user pointed at github.com/sammwyy/gtasands (a DS reimplementation, no license: ideas only, clean-room).
+Measured which of its ideas apply (`docs/3DS_STATUS.md`, "Distance priority"): a distance cap saves little here
+(the PS2 game already limits draw distance; lit cost is all within 50 m), but distance-ordered dropping fixes the
+compact profile's holes. Implemented in `w3d_citro3d_depth.h` + `w3d_citro3d_backend.c`; Old captures improved.
+
+Other gtasands ideas not done yet:
+- Bottom screen HUD: route the 2D overlay layer (radar, money, clock, wanted level) to the bottom screen, which now
+  shows only the debug console. Menus/subtitles share that layer: needs a screen-region split or a toggle.
+- Hide tiny props by projected size (their wires/clutter filter), and GPU colour multiply for prelit geometry.

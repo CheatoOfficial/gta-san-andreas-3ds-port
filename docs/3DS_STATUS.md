@@ -332,6 +332,27 @@ previous builds. The default-switch build was re-measured: identical timings and
 Double-buffered zero-copy was considered and not done: in this route the full profile's linear heap falls to
 6.4 MiB free (14 MiB of textures cached, 20 MiB budget), so a second 8.25 MiB vertex buffer does not fit.
 
+## Distance priority for the static budget (2026-11-16, compact profile and profile builds)
+
+Idea borrowed (clean-room, no code) from the gtasands DS project's distance-banded map budget with fog matched to the
+cut. The compact profile caps static geometry at 10,000 converted vertices per frame; before this, whichever static
+draws the game submitted last were dropped (260-350 meshes per frame on the route), leaving holes in nearby walls and
+floating building fragments. Now every static draw attempt adds an estimated vertex count (triangles x 3, calibrated
+each frame against the real conversion output) to its 10 m band of origin depth; the next frame skips bands past the
+one where the budget overflows and fills that band only with what the nearer bands leave (`w3d_citro3d_depth.h`).
+The fog far distance follows the cut by at most 8 m per frame, never nearer than 100 m. Release New builds have no
+static budget and are unaffected. Host test `backend_distance` covers the helpers and the far-before-near case.
+
+Measurements behind the choice (private, New mode, busiest window): in this route the game already converts nothing
+beyond ~150 m, and 85k of 90k lit vertices (122 of 128 ms) come from objects whose origin is within 50 m, so a plain
+distance cap would not save meaningful time. 13% of lit vertices repeat a mesh and matrix within a frame, always with
+a different material state.
+
+Old mode, same route: static vertices drawn per frame 9.4-9.9k of 10k (draw-order skips 0-3 meshes, previously
+260-350); submit and conversion times match the previous build within 0.5 ms. Four captures were compared side by
+side privately: complete walls, fences, palms, poles and skyline where the previous build had holes and floating
+pieces, with light distance haze. Azahar only.
+
 ## Known issues from the pre-publication review (2026-11-15)
 
 * Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a

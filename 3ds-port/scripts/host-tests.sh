@@ -36,4 +36,6 @@ run backend_old3ds -DHLE_3DS_OLD_MODEL=1 -I"$T/3ds_backend_stubs" "$T/backend_3d
                    "$R/3ds/w3d_citro3d_adapter.c" "$T/3ds_backend_stubs/platform_stubs.c"
 run backend_budget -DHLE_3DS_OLD_MODEL=1 -DW3D_C3D_STATIC_VERT_BUDGET=3 -I"$T/3ds_backend_stubs" \
                    "$T/backend_3ds_budget_main.c" "$R/3ds/w3d_citro3d_backend.c" "$R/3ds/w3d_citro3d_adapter.c" "$T/3ds_backend_stubs/platform_stubs.c"
+run backend_distance -DHLE_3DS_OLD_MODEL=1 -DW3D_C3D_STATIC_VERT_BUDGET=3 -I"$T/3ds_backend_stubs" \
+                   "$T/backend_3ds_distance_main.c" "$R/3ds/w3d_citro3d_backend.c" "$R/3ds/w3d_citro3d_adapter.c" "$T/3ds_backend_stubs/platform_stubs.c"
 exit $fail
