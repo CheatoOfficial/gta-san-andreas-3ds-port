@@ -12,7 +12,13 @@ import re
 import sys
 
 ALLOW = [re.compile(p) for p in (
-    r"^Citro3D timing \(\d+ frames, ms/frame\): between-presents [\d.]+ FrameBegin-wait [\d.]+ submit [\d.]+ FrameEnd [\d.]+$",
+    r"^Citro3D timing \(\d+ frames, ms/frame\): between-presents [\d.]+ FrameBegin-wait [\d.]+ submit [\d.]+ "
+    r"(?:\(world draw calls [\d.]+\) )?FrameEnd [\d.]+$",
+    r"^Citro3D lit cache \(\d+ frames, per frame\): \d+ hits \d+ verts \| \d+ misses \d+ verts \| skinned \d+ verts \| "
+    r"evicted \d+, no memory \d+, \d+ KiB held$",
+    r"^Citro3D GPU lighting \(\d+ frames, per frame\): \d+ batches, \d+ CPU fallbacks \| GPU static \d+ batches, \d+ CPU "
+    r"fallbacks, cache \d+ hits \d+ verts / \d+ misses \d+ verts$",
+    r"^Citro3D texture decode time: [\d.]+ ms since the last pressure line$",
     r"^Citro3D convert \(\d+ frames, per frame\): static [\d.]+ ms \d+ verts \d+ calls \| lit [\d.]+ ms \d+ verts \d+ calls$",
     r"^Citro3D budget skips \(\d+ frames, per frame\): \d+ static meshes$",
     r"^Citro3D frame \d+: \d+/\d+ triangles, batches=\d+, near-clipped=\d+, near-rejected=\d+, W-dropped=\d+, "
