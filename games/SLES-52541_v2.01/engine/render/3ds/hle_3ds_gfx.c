@@ -82,6 +82,11 @@ static C3D_Mtx bottom_projection;
 static int bottom_active;
 static C3D_Tex fog_ramp;
 static int fog_ramp_ready;
+/* what an untextured batch binds on texture unit 1: citro3d 1.7.1's C3D_TexBind(unit > 0, NULL) reads the texture's
+   type through the NULL pointer (a data abort at address 0xC on real hardware; Azahar reads 0 and carries on), so
+   unit 1 always gets a real texture - this 8x8 white one, never sampled by the untextured combiner set-up */
+static C3D_Tex blank_tex;
+static int blank_tex_ready;
 static DVLB_s *shader_dvlb;
 static shaderProgram_s shader_program;
 static C3D_Mtx display_projection;
@@ -92,6 +97,8 @@ static int projection_uniform = -1, fog_uniform = -1, uv_scale_uniform = -1;
 /* GPU lighting (HLE_3DS_GPU_LIGHT): the shader's lit-batch uniforms */
 static int lit_bool = -1, viewz_uniform = -1, nrow_uniform = -1, ldir_uniform = -1, lcol_uniform = -1;
 static int material_uniform = -1, base_uniform = -1, options_uniform = -1, postmul_uniform = -1, postadd_uniform = -1;
+static int bones_uniform = -1, skin_bool = -1, obj_bool = -1;
+static uint64_t submit_draw_ticks;           /* world draw-call loop, summed for the 120-frame timing line */
 static Hle3dsVertex *vertex_buffer;
 static Hle3dsVertex *overlay_vertex_buffer;
 static Hle3dsVertex *sky_vertex_buffer;
@@ -197,6 +204,47 @@ static void fog_environment(int enabled, uint32_t color)
     C3D_DirtyTexEnv(env);
 }
 
+
+/* Hang watchdog (profile builds): a thread of higher priority than the game on the same core wakes every second; when
+   neither the presented frame count nor the virtual time has moved for 10 s it logs where the main thread is - the
+   present stage below (0 = game / HLE code outside the present), the frame, the virtual time and the guest's last
+   loop back-edge - and flushes the log, every 10 s while the hang lasts. Real-hardware diagnosis: a hang inside a
+   GPU wait never reaches the main-loop stall watchdog (hle_main.c). */
+extern volatile unsigned hle_3ds_stage;       /* (defined in hle_3ds_texture.c) 1 FrameBegin (GPU wait), 2 copy / clip, 3 world draws, 4 overlay,
+                                                 5 flush + FrameEnd, 10 texture decode; 0 elsewhere */
+#if HLE_3DS_PROF
+static volatile unsigned wd_frames;
+static void watchdog_main(void *arg)
+{
+    (void)arg;
+    uint64_t last_v = hle_vtime;
+    unsigned last_f = wd_frames, still = 0;
+    for (;;) {
+        svcSleepThread(1000000000LL);
+        const uint64_t v = hle_vtime;
+        const unsigned f = wd_frames;
+        if (v != last_v || f != last_f) { last_v = v; last_f = f; still = 0; continue; }
+        if (++still % 10u) continue;
+        char line[192];
+        const int n = snprintf(line, sizeof line, "HANG: no frame and no virtual time for %u s: stage %u, frame %u, vtime "
+                               "%.3f s, guest back-edge %08x\n", still, hle_3ds_stage, f, (double)v / EE_HZ,
+                               (unsigned)hle_where);
+        if (n > 0) {
+            hle_plat_log_write(line, (size_t)n);
+            hle_plat_log_flush();
+            if (!hle_3ds_gfx_bottom_owned()) printf("%s", line);   /* on the console too, in case the log is lost */
+        }
+    }
+}
+static void watchdog_start(void)
+{
+    s32 prio = 0x30;
+    svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
+    Thread t = threadCreate(watchdog_main, NULL, 8u * 1024u, prio > 0x19 ? prio - 1 : 0x18, -2, true);
+    LOG("hang watchdog: %s (priority %ld)\n", t ? "on" : "FAILED to start", (long)(prio > 0x19 ? prio - 1 : 0x18));
+}
+#endif
+
 int hle_3ds_gfx_init(void)
 {
     if (!w3d_citro3d_init() || !hle_3ds_texture_init()) goto fail;
@@ -230,10 +278,15 @@ int hle_3ds_gfx_init(void)
         options_uniform = shaderInstanceGetUniformLocation(vs, "options");
         postmul_uniform = shaderInstanceGetUniformLocation(vs, "postmul");
         postadd_uniform = shaderInstanceGetUniformLocation(vs, "postadd");
+        bones_uniform = shaderInstanceGetUniformLocation(vs, "bones");
+        skin_bool = shaderInstanceGetUniformLocation(vs, "skinmode");
+        obj_bool = shaderInstanceGetUniformLocation(vs, "objmode");
         if (lit_bool < 0 || viewz_uniform < 0 || nrow_uniform < 0 || ldir_uniform < 0 || lcol_uniform < 0 ||
             material_uniform < 0 || base_uniform < 0 || options_uniform < 0 || postmul_uniform < 0 ||
-            postadd_uniform < 0) goto fail;
+            postadd_uniform < 0 || bones_uniform < 0 || skin_bool < 0 || obj_bool < 0) goto fail;
         C3D_BoolUnifSet(GPU_VERTEX_SHADER, lit_bool, false);
+        C3D_BoolUnifSet(GPU_VERTEX_SHADER, skin_bool, false);
+        C3D_BoolUnifSet(GPU_VERTEX_SHADER, obj_bool, false);
     }
     if (projection_uniform < 0 || fog_uniform < 0 || uv_scale_uniform < 0) goto fail;
     C3D_AttrInfo *attributes = C3D_GetAttrInfo();
@@ -252,6 +305,10 @@ int hle_3ds_gfx_init(void)
     C3D_TexSetFilter(&fog_ramp, GPU_LINEAR, GPU_LINEAR);
     C3D_TexSetWrap(&fog_ramp, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
     C3D_TexFlush(&fog_ramp);
+    if (!C3D_TexInit(&blank_tex, 8, 8, GPU_RGBA8)) goto fail;
+    blank_tex_ready = 1;
+    memset(blank_tex.data, 0xFF, 8u * 8u * 4u);
+    C3D_TexFlush(&blank_tex);
     vertex_buffer = linearAlloc(sizeof(Hle3dsVertex) * W3D_C3D_FRAME_VERTEX_CAPACITY);
     overlay_vertex_buffer = linearAlloc(sizeof(Hle3dsVertex) * HLE_3DS_2D_VERTEX_CAPACITY);
     sky_vertex_buffer = linearAlloc(sizeof(Hle3dsVertex) * HLE_3DS_SKY_VERTEX_CAPACITY);
@@ -284,6 +341,9 @@ int hle_3ds_gfx_init(void)
     }
 #endif
     gfx_ready = 1;
+#if HLE_3DS_PROF
+    watchdog_start();
+#endif
     w3d_citro3d_frame_reset();
     return 1;
 
@@ -493,6 +553,16 @@ static void set_lit_uniforms(const W3dGpuLight *g)
     Mtx_Multiply(&combined, &world_projection, &camera_world);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, projection_uniform, &combined);
     C3D_FVUnifSet(GPU_VERTEX_SHADER, viewz_uniform, wr[2][0], wr[2][1], wr[2][2], wr[2][3]);
+    if (g->mode == 1) {                         /* GPU static: vertex colour + the material step only */
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, postmul_uniform, g->post_mul[0], g->post_mul[1], g->post_mul[2], g->post_mul[3]);
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, postadd_uniform, g->post_add[0], g->post_add[1], g->post_add[2], 0.0f);
+        C3D_BoolUnifSet(GPU_VERTEX_SHADER, lit_bool, false);
+        C3D_BoolUnifSet(GPU_VERTEX_SHADER, skin_bool, false);
+        C3D_BoolUnifSet(GPU_VERTEX_SHADER, obj_bool, true);
+        lit_uniforms_active = 1;
+        return;
+    }
+    C3D_BoolUnifSet(GPU_VERTEX_SHADER, obj_bool, false);
     for (int j = 0; j < 3; ++j)
         C3D_FVUnifSet(GPU_VERTEX_SHADER, nrow_uniform + j, wr[j][0], wr[j][1], wr[j][2], 0.0f);
     for (int l = 0; l < 4; ++l) {
@@ -504,6 +574,15 @@ static void set_lit_uniforms(const W3dGpuLight *g)
     C3D_FVUnifSet(GPU_VERTEX_SHADER, options_uniform, g->diffuse, g->alpha, 0.0f, 0.0f);
     C3D_FVUnifSet(GPU_VERTEX_SHADER, postmul_uniform, g->post_mul[0], g->post_mul[1], g->post_mul[2], g->post_mul[3]);
     C3D_FVUnifSet(GPU_VERTEX_SHADER, postadd_uniform, g->post_add[0], g->post_add[1], g->post_add[2], 0.0f);
+    if (g->skin) {
+        /* 8 bones x 3 rows; a whole write is one 24-vector upload */
+        C3D_FVec *rows = C3D_FVUnifWritePtr(GPU_VERTEX_SHADER, bones_uniform, 24);
+        for (int r = 0; r < 24; ++r) {
+            rows[r].x = g->bones[r][0]; rows[r].y = g->bones[r][1];
+            rows[r].z = g->bones[r][2]; rows[r].w = g->bones[r][3];
+        }
+    }
+    C3D_BoolUnifSet(GPU_VERTEX_SHADER, skin_bool, g->skin != 0);
     C3D_BoolUnifSet(GPU_VERTEX_SHADER, lit_bool, true);
     lit_uniforms_active = 1;
 }
@@ -511,6 +590,8 @@ static void clear_lit_uniforms(void)
 {
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, projection_uniform, &world_projection);
     C3D_BoolUnifSet(GPU_VERTEX_SHADER, lit_bool, false);
+    C3D_BoolUnifSet(GPU_VERTEX_SHADER, skin_bool, false);
+    C3D_BoolUnifSet(GPU_VERTEX_SHADER, obj_bool, false);
     lit_uniforms_active = 0;
 }
 #endif
@@ -582,7 +663,7 @@ static void draw_overlay_batches(C3D_TexEnv *environment, unsigned screen)
                 v->uv[1] *= texture->uv_scale_v;
             }
         } else {
-            C3D_TexBind(1, NULL);
+            C3D_TexBind(1, &blank_tex);
             C3D_TexEnvSrc(environment, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
             C3D_TexEnvFunc(environment, C3D_Both, GPU_REPLACE);
         }
@@ -599,9 +680,14 @@ static void draw_overlay_batches(C3D_TexEnv *environment, unsigned screen)
 void hle_3ds_gfx_present(void)
 {
     if (!gfx_ready) return;
-    /* Wait for the previous frame's GPU work BEFORE the CPU rewrites the shared vertex buffers below. */
+    /* Wait for the previous frame's GPU work BEFORE the CPU rewrites the shared vertex buffers below. Without
+       C3D_FRAME_NONBLOCK, C3D_FrameBegin always waits for the GPU; C3D_FRAME_SYNCDRAW would add C3D_FrameSync, the
+       60 Hz frame-rate wait, which only costs time (~half a vblank per frame) while frames take far longer than
+       16.7 ms. */
     const uint64_t tick_pre = svcGetSystemTick();
-    C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+    hle_3ds_stage = 1;
+    C3D_FrameBegin(0);
+    hle_3ds_stage = 2;
     const uint64_t tick_begin = svcGetSystemTick();
     hle_3ds_texture_gpu_synced();
     const W3dC3dVertex *source = w3d_citro3d_frame_vertices();
@@ -622,6 +708,8 @@ void hle_3ds_gfx_present(void)
     }
 #endif
     input_triangles = source_count > 0 ? (unsigned)source_count / 3u : 0;
+    for (int b = 0; b < batch_count; ++b)             /* vertex-cache batches are not in the frame buffer */
+        if (batches[b].src) input_triangles += batches[b].vertex_count / 3u;
     drawn_triangles = dropped_w = 0;
     near_clipped_triangles = near_rejected_triangles = capacity_dropped_triangles = 0;
 #if HLE_3DS_TEXTURE_COLOR_DEBUG
@@ -629,6 +717,7 @@ void hle_3ds_gfx_present(void)
         const int probe_batches = batch_count < 8 ? batch_count : 8;
         for (int b = 0; b < probe_batches; ++b) {
             const W3dC3dBatch *batch = &batches[b];
+            if (batch->src) continue;                    /* a vertex-cache batch: not in source[] */
             unsigned end = batch->first_vertex + batch->vertex_count;
             if (end > (unsigned)source_count) end = (unsigned)source_count;
             float umin = 1.0e30f, umax = -1.0e30f, vmin = 1.0e30f, vmax = -1.0e30f;
@@ -664,7 +753,7 @@ void hle_3ds_gfx_present(void)
     for (int b = 0; b < batch_count; ++b) {
         const W3dC3dBatch *batch = &batches[b];
         unsigned source_end = batch->first_vertex + batch->vertex_count;
-        if (source_end > (unsigned)source_count) source_end = (unsigned)source_count;
+        if (!batch->src && source_end > (unsigned)source_count) source_end = (unsigned)source_count;
         const unsigned output_first = (unsigned)output_count;
 #if HLE_3DS_GPU_CLIP
         /* A batch whose conversion saw only finite values, and no vertex behind the near plane when fogged, would
@@ -672,7 +761,8 @@ void hle_3ds_gfx_present(void)
         if (gpu_batch_copies_as_is(batch->screen, batch->state.fog) && source_end > batch->first_vertex) {
             const unsigned n = (source_end - batch->first_vertex) / 3u * 3u;
             if (n <= W3D_C3D_FRAME_VERTEX_CAPACITY - (unsigned)output_count) {
-                memcpy(&vertex_buffer[output_count], &source[batch->first_vertex], (size_t)n * sizeof(*vertex_buffer));
+                memcpy(&vertex_buffer[output_count], batch->src ? batch->src : &source[batch->first_vertex],
+                       (size_t)n * sizeof(*vertex_buffer));   /* src: a vertex-cache entry, pinned for this frame */
                 output_count += (int)n;
                 drawn_triangles += n / 3u;
                 batch_ranges[b].first = output_first;
@@ -802,7 +892,7 @@ void hle_3ds_gfx_present(void)
            submits this queued pass after opaque world batches. */
         C3D_DepthTest(true, GPU_GEQUAL, GPU_WRITE_COLOR);
         C3D_AlphaTest(false, GPU_GREATER, 0);
-        C3D_TexBind(1, NULL);
+        C3D_TexBind(1, &blank_tex);
         C3D_TexEnvSrc(environment, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
         C3D_TexEnvFunc(environment, C3D_Both, GPU_REPLACE);
         for (unsigned b = 0; b < sky_batch_count; ++b) {
@@ -812,6 +902,8 @@ void hle_3ds_gfx_present(void)
             C3D_DrawArrays(GPU_TRIANGLES, (int)batch->first, (int)batch->count);
         }
     }
+    hle_3ds_stage = 3;
+    const uint64_t tick_draw0 = svcGetSystemTick();   /* split of the submit time: world draw calls vs the rest */
     BufInfo_Init(buffers);
     BufInfo_Add(buffers, vertex_buffer, sizeof(Hle3dsVertex), 4, 0x3210);
     /* Init/Add mutate the descriptor; Set marks the new binding dirty after
@@ -877,7 +969,7 @@ void hle_3ds_gfx_present(void)
             C3D_TexEnvFunc(environment, C3D_Both, GPU_MODULATE);
 #endif
         } else {
-            C3D_TexBind(1, NULL);
+            C3D_TexBind(1, &blank_tex);
             C3D_TexEnvSrc(environment, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
             C3D_TexEnvFunc(environment, C3D_Both, GPU_REPLACE);
         }
@@ -901,6 +993,7 @@ void hle_3ds_gfx_present(void)
 #if HLE_3DS_GPU_LIGHT
     if (lit_uniforms_active) clear_lit_uniforms();
 #endif
+    submit_draw_ticks += svcGetSystemTick() - tick_draw0;
 
     fog_environment(0, 0);
     set_batch_uniforms(0.0f, 1.0f, 1.0f, 1.0f);
@@ -945,8 +1038,19 @@ void hle_3ds_gfx_present(void)
             present_count, cmd_usage_milli, source_count, batch_count, overlay_vertex_count, overlay_batch_count);
         hle_plat_log_flush();
     }
+    /* The GPU reads the vertex buffers from memory, not through the CPU's data cache: write the frame's vertices back
+       before the command list runs (Azahar has no cache model, so a missing flush never showed there). */
+    hle_3ds_stage = 5;
+    if (output_count > 0) GSPGPU_FlushDataCache(vertex_buffer, (u32)output_count * sizeof(*vertex_buffer));
+    if (sky_vertex_count) GSPGPU_FlushDataCache(sky_vertex_buffer, (u32)sky_vertex_count * sizeof(*sky_vertex_buffer));
+    if (overlay_vertex_count)
+        GSPGPU_FlushDataCache(overlay_vertex_buffer, (u32)overlay_vertex_count * sizeof(*overlay_vertex_buffer));
     const uint64_t tick_submit = svcGetSystemTick();
     C3D_FrameEnd(0);
+    hle_3ds_stage = 0;
+#if HLE_3DS_PROF
+    ++wd_frames;
+#endif
     {
         static uint64_t acc_wait, acc_submit, acc_end, acc_gap, last_end; static unsigned acc_n;
         const uint64_t tick_end = svcGetSystemTick();
@@ -955,8 +1059,10 @@ void hle_3ds_gfx_present(void)
         last_end = tick_end;
         if (++acc_n == 120u) {
             const double ms = 1000.0 / (double)SYSCLOCK_ARM11 / 120.0;
-            LOG("Citro3D timing (120 frames, ms/frame): between-presents %.1f FrameBegin-wait %.1f submit %.1f FrameEnd %.1f\n",
-                (double)acc_gap * ms, (double)acc_wait * ms, (double)acc_submit * ms, (double)acc_end * ms);
+            LOG("Citro3D timing (120 frames, ms/frame): between-presents %.1f FrameBegin-wait %.1f submit %.1f (world draw "
+                "calls %.1f) FrameEnd %.1f\n", (double)acc_gap * ms, (double)acc_wait * ms, (double)acc_submit * ms,
+                (double)submit_draw_ticks * ms, (double)acc_end * ms);
+            submit_draw_ticks = 0;
             uint64_t ct[2], cv[2], cc[2];
             w3d_citro3d_take_conv_stats(ct, cv, cc);
             LOG("Citro3D convert (120 frames, per frame): static %.1f ms %llu verts %llu calls | lit %.1f ms %llu verts %llu calls\n",
@@ -964,6 +1070,18 @@ void hle_3ds_gfx_present(void)
                 (double)ct[1] * ms, (unsigned long long)(cv[1] / 120u), (unsigned long long)(cc[1] / 120u));
             LOG("Citro3D budget skips (120 frames, per frame): %u static meshes\n", w3d_citro3d_budget_skipped() / 120u);
             w3d_citro3d_log_static_cut(120u);
+#if HLE_3DS_GPU_LIGHT
+            {
+                uint64_t lc[7];
+                size_t lc_bytes = 0;
+                w3d_citro3d_lit_cache_stats(lc, &lc_bytes);
+                LOG("Citro3D lit cache (120 frames, per frame): %llu hits %llu verts | %llu misses %llu verts | skinned %llu verts | "
+                    "evicted %llu, no memory %llu, %u KiB held\n", (unsigned long long)(lc[0] / 120u),
+                    (unsigned long long)(lc[2] / 120u), (unsigned long long)(lc[1] / 120u), (unsigned long long)(lc[3] / 120u),
+                    (unsigned long long)(lc[4] / 120u), (unsigned long long)lc[5], (unsigned long long)lc[6],
+                    (unsigned)(lc_bytes / 1024u));
+            }
+#endif
             hle_plat_log_flush();
             acc_wait = acc_submit = acc_end = acc_gap = 0; acc_n = 0;
         }
@@ -1033,6 +1151,7 @@ void hle_3ds_gfx_shutdown(void)
     free(overlay_source); overlay_source=NULL;
     free(overlay_batches); overlay_batches=NULL;
     if (fog_ramp_ready) { C3D_TexDelete(&fog_ramp); fog_ramp_ready = 0; }
+    if (blank_tex_ready) { C3D_TexDelete(&blank_tex); blank_tex_ready = 0; }
     if (capture_rgb) { linearFree(capture_rgb); capture_rgb = NULL; }
     if (vertex_buffer) { linearFree(vertex_buffer); vertex_buffer = NULL; }
     if (overlay_vertex_buffer) { linearFree(overlay_vertex_buffer); overlay_vertex_buffer = NULL; }

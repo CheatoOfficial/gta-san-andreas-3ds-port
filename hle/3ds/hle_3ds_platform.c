@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 #include "hle.h"
 #include "hle_plat.h"
 #include "hle_memcard.h"
@@ -143,14 +144,25 @@ void hle_plat_log_write(const char *text, size_t size)
 {
     if (!session_log) {
         char path[HLE_3DS_PATH_MAX];
-        if (resolve_path("session.log", path, sizeof(path))) session_log = fopen(path, "wb");
+        if (resolve_path("session.log", path, sizeof(path))) {
+            /* create, close (commits the directory entry to the card), then append: a session that ends by a forced
+               power-off (a hang on real hardware) still leaves its log behind */
+            FILE *created = fopen(path, "wb");
+            if (created) fclose(created);
+            session_log = fopen(path, "ab");
+        }
     }
     if (session_log) fwrite(text, 1, size, session_log);
 }
 
 void hle_plat_log_flush(void)
 {
-    if (session_log) fflush(session_log);
+    if (!session_log) return;
+    fflush(session_log);
+    /* FSFILE_Flush at most once a second: the data reaches the card, not only a cache, without slowing timing runs */
+    static uint64_t last_sync;
+    const uint64_t now = svcGetSystemTick();
+    if (now - last_sync >= SYSCLOCK_ARM11) { last_sync = now; fsync(fileno(session_log)); }
 }
 
 void hle_plat_milestone(const char *line)
@@ -183,7 +195,41 @@ uint16_t hle_plat_pad_read(uint8_t sticks[4])
 }
 
 void hle_plat_backtrace(void) {}
+#if HLE_3DS_PROF
+/* profile builds: which hardware registers the slow memory path serves (address histogram, the top 12 logged after
+   every 2^21 accesses); the host build attributes accesses to generated functions instead */
+static struct { uint32_t address; uint64_t count; } mmio_hist[256];
+static uint64_t mmio_total, mmio_other;
+static void mmio_report(void)
+{
+    unsigned order[256], n = 0;
+    for (unsigned i = 0; i < 256; ++i) if (mmio_hist[i].count) order[n++] = i;
+    for (unsigned i = 0; i < n; ++i)
+        for (unsigned j = i + 1; j < n; ++j)
+            if (mmio_hist[order[j]].count > mmio_hist[order[i]].count) { unsigned t = order[i]; order[i] = order[j]; order[j] = t; }
+    LOG("MMIO slow path: %llu accesses (%llu not tracked); top registers:", (unsigned long long)mmio_total,
+        (unsigned long long)mmio_other);
+    for (unsigned i = 0; i < n && i < 12u; ++i)
+        LOG(" %08x x%llu", mmio_hist[order[i]].address, (unsigned long long)mmio_hist[order[i]].count);
+    LOG("\n");
+}
+void hle_plat_note_mmio(void *ra, uint32_t address)
+{
+    (void)ra;
+    unsigned h = (address >> 2) * 2654435761u >> 24;
+    for (unsigned k = 0; k < 8u; ++k, h = (h + 1u) & 255u) {
+        if (mmio_hist[h].count && mmio_hist[h].address != address) continue;
+        mmio_hist[h].address = address;
+        ++mmio_hist[h].count;
+        goto counted;
+    }
+    ++mmio_other;
+counted:
+    if ((++mmio_total & ((1u << 21) - 1u)) == 0) mmio_report();
+}
+#else
 void hle_plat_note_mmio(void *ra, uint32_t address) { (void)ra; (void)address; }
+#endif
 const char *hle_plat_fn_name(void *pc) { (void)pc; return NULL; }
 int hle_plat_hw_totals(uint64_t total[20], uint64_t *us) { (void)total; (void)us; return 0; }
 int hle_plat_hw_door(uint32_t raw[20]) { (void)raw; return 0; }

@@ -22,6 +22,7 @@
  * cycles per hook, report at the end); im2d_guest=0 (PSP ps2rc.cfg) / HLE_IM2D_GUEST=0 (host environment) skips the 2D
  * draw originals (they only build PS2 DMA packets that the HLE drops). */
 #include "hle.h"
+#include "hle_fast.h"
 #include "hle_cfg.h"                 /* the shared ps2rc.cfg table */
 #include "hle_render.h"
 #include "hle_w3d.h"
@@ -435,7 +436,23 @@ HLE_FN(drv_texture_read)
         log_ret(H_TEX_READ, c);
 }
 
-HLE_FN(drv_texcache_access) { PASS(H_TEXCACHE, drv_texcache_access); }
+/* x_texup=0|1 (default 1 = the guest original): the driver's GS texture-cache access 0x368B58 places a raster in GS
+   memory and builds its upload packets (0x34EAF8). This renderer reads rasters from guest memory itself and never
+   uses GS memory or those packets, so x_texup=0 skips the call and reports success (v0 = 1). Experimental: measured
+   with captures before any default change. */
+static int texup_on = 1, texup_gen = -1;
+static uint64_t texup_skipped;
+HLE_FN(drv_texcache_access)
+{
+    if (texup_gen != hle_x_gen) { texup_gen = hle_x_gen; texup_on = hle_x_opt("texup", 1); }
+    if (!texup_on) {
+        ++calls[H_TEXCACHE];
+        ++texup_skipped;
+        c->r[2].d[0] = 1;
+        return;
+    }
+    PASS(H_TEXCACHE, drv_texcache_access);
+}
 
 /* ---- 2D draws: drawn by the capture (host) / the GE (PSP), then the translated original unless im2d_guest is 0 (it
    returns TRUE; it builds VU1 DMA packets the HLE drops) */

@@ -446,6 +446,127 @@ Both are now the defaults in 3DS release builds only (profile builds keep 0 so f
 comparable); `ps2rc.cfg` overrides. Verified in a release build with no cfg: 'config: x_pace=2' and
 'boot pacing: x_bootpace=1' logged, loading at 1x.
 
+## First real-hardware runs (New 3DS LL, 2026-11-17)
+
+The owner ran a private profile-build CIA (Old 3DS 64 MB / New 3DS 124 MB, 804 MHz, L2) on a New 3DS LL:
+
+1. Crash at start-up, twice (Luma ARM11 dumps): data abort reading address 0xC in citro3d 1.7.1's `C3D_TexBind`,
+   called from the 2D/overlay pass with `C3D_TexBind(1, NULL)`. For units > 0 citro3d reads the texture's type
+   through the pointer without a NULL check; Azahar returns 0 for that read, so no emulator run ever showed it. The
+   call dated from the first 3DS port layer, i.e. every 3DS build so far would crash on hardware. Fixed (1369ce0):
+   untextured batches bind a permanent 8x8 white texture on unit 1 (2D/overlay, sky, world).
+2. With that fix: no crash; the game reaches the loading-thread milestone (virtual 2.035 s, frame 101 - the first
+   frame with any geometry: two textured 2D quads of the first loading screen) and freezes with HOME unresponsive;
+   no session.log reached the card (created but never committed before the forced power-off).
+   Follow-ups (not yet tried on hardware): the per-frame vertex buffers are now flushed from the data cache before
+   the GPU runs (15dcac2 - Azahar has no cache model, so stale vertices never showed there); the session log is
+   committed at creation and synced to the card at most once a second; a hang watchdog thread reports the present
+   stage, frame and virtual time in the log and on the console after 10 s without progress (bbab3a0).
+
+## Where gameplay frame time goes, and the GPU-lit conversion cache (2026-11-17)
+
+Profile attribution (private Azahar, New mode, scripted route, profile builds; temporary zones under 0x2EF270, since
+removed): the "weather / effects" label on 0x2EF270 was misleading. Its 30-60 ms of self time sat in 0x369E18 (the
+driver's Im3D RenderIndexedPrimitive) and below it in 0x36B968, the driver's pipeline executor, because the HLE
+immediate-mode draw (`hle_w3d_imm.c`) first flushes every deferred building batch (`w3d_defer_flush`). Per main-loop
+iteration (141-175 ms): render pipeline incl. that flush 61-86 ms (static conversion ~17 ms, lit ~10-25 ms, the
+rest per-batch work), camera_show 18-22 ms, audio ~10 ms, render_list_build ~7 ms. Most lit vertices are skinned
+peds (7k-12.5k per frame against 1.7k-11.7k non-skinned).
+
+GPU-lit conversion cache (`w3d_citro3d_adapter.c`, `HLE_3DS_LIT_CACHE`, default on; 3 MiB on the full profile, off on
+the compact one): with GPU lighting a non-skinned lit vertex is object-space data, so a converted range is kept and
+copied on the next draw. The key includes a hash of the vertex bytes and primitive words read, so reused memory is a
+miss; only the per-draw near screening is redone. Host test (`adapter-equiv`): 300 random cases, miss / hit /
+uncached outputs bit-identical, changed vertex at the same address never served (both GPU_CLIP settings).
+Same route, same frames (identical vertex counts), lit conversion per frame before -> after: 20.9 -> 16.0,
+10.5 -> 10.1, 10.7 -> 10.1, 14.7 -> 13.7, 24.6 -> 20.1 ms; between presents 143.5 -> 138.6, 114.5 -> 114.0,
+122.4 -> 121.8, 137.6 -> 136.7, 152.8 -> 148.4 ms. Hits cover almost every non-skinned range; the remaining lit time
+is CPU skinning. A small win (0.5-5 ms per frame) in Azahar; not measured on hardware.
+
+GPU skinning (`HLE_3DS_GPU_SKIN`, build switch, default 1; acts with GPU lighting): a skinned lit range whose vertices
+have at most three non-zero bone weights (summing to 1 within byte quantisation) is sent as bind-pose position /
+normal with the (bone, weight) pairs packed into the three spare floats, and the shader (`vshader.v.pica`, skin
+procedure, `bones[24]` uniforms) blends it; other ranges keep CPU skinning. The output no longer depends on the bones,
+so skinned ranges are cached too. Near screening for these ranges is conservative (every used bone x every corner of
+the bind-pose bounds). Host test: 300 random skinned meshes, the shader's arithmetic emulated from the packed output
+matches CPU skinning, cached redraws keep the data and take the new bones, 30 four-weight meshes take the CPU path.
+Azahar, same route and frames, GPU skinning off -> on (lit cache on in both): lit conversion 28.6 -> 19.9 ms
+(53k lit verts), 66.6 -> 47.6 (90k), 43.2 -> 27.5 (51k), 33.8 -> 21.6 (45k); between presents 150.9 -> 142.2,
+214.5 -> 195.5, 180.0 -> 164.3, 167.5 -> 155.2 ms. Captures at frames 3000-4800 (CJ in the foreground): both screens
+pixel-identical. CPU-skinned remainder ~0.3k verts per frame. Not measured on hardware (Azahar runs the PICA shader
+on the host, so the GPU side of the cost is not represented).
+
+GPU static path (`w3d_citro3d_convert_mesh_range_gpu`, with GPU lighting): static (prelit) ranges are sent as
+object-space vertices (position, colour bytes / 255, scaled UV) with camera x world as the batch matrix and
+convert_vertex's material step (lamb / lemis, byte-rounded like mul255) in the shader (`objmode`, `post` procedure).
+The data is cached with the lit ranges (cache budget raised to 5 MiB on the full profile); the same per-vertex near
+screening and CPU fallback as GPU-lit. Host test: 300 random static meshes, the shader's arithmetic emulated from the
+output matches the CPU conversion (clip, colour within one level, UV, view z), cached redraws identical.
+Azahar, same frames, before -> after: static conversion 16.6 -> 7.9, 16.8 -> 7.9, 16.6 -> 7.9, 17.9 -> 8.1,
+18.1 -> 8.0 ms per frame (19.5k-19.9k static verts, ~95% served from the cache, 0 CPU fallbacks); between presents
+142.2 -> 133.6, 195.5 -> 186.9, 164.3 -> 155.8, 155.2 -> 145.9, 136.4 -> 126.5 ms. Captures: bottom screen identical,
+top screen at most 20 pixels differ by one level (GPU rounding). The remaining static time is mostly copying cached
+vertices (twice: into the frame buffer, then the present pass); drawing straight from the cached buffers is the next
+step. Not measured on hardware.
+
+Vertex-cache hits by reference: a hit no longer copies the stored vertices into the frame buffer; the batch points
+at the cache entry (pinned until that frame is presented, so eviction skips it) and the present pass copies it into
+the GPU buffer once. Host test: a hit leaves the output untouched and returns the stored data, and a pinned entry
+survives cache pressure within its frame. Azahar, same frames, before -> after: static 7.9 -> 5.4, lit 20.0 -> 13.1,
+47.9 -> 37.4, 27.7 -> 21.8 ms; whole frame (between presents + wait + submit) 168.3 -> 159.0, 230.7 -> 218.1,
+188.1 -> 179.0, 176.1 -> 168.0, 150.7 -> 145.6 ms; captures pixel-identical. A 35-minute soak with the GPU paths
+(before this change) ran to virtual 735 s (17 366 iterations): no stall / fatal / clamp, cache steady at ~4 MiB,
+minimum linear free 5.9 MiB.
+
+Frame begin without the 60 Hz pacing: `C3D_FrameBegin(0)` instead of `C3D_FRAME_SYNCDRAW`. Without
+`C3D_FRAME_NONBLOCK` citro3d still waits for the previous frame's GPU work (the vertex-buffer guarantee); SYNCDRAW only
+added C3D_FrameSync, a wait for the 60 Hz frame cadence that cost ~half a vblank per frame while frames take far
+longer than 16.7 ms. Azahar, same frames: FrameBegin-wait 7.8-10.8 -> 0.0 ms in every window, everything else
+unchanged (whole frame -5..-11%), captures pixel-identical. On hardware the GPU wait itself (real GPU work) can remain.
+
+Old 3DS (compact profile, no vertex cache), same route and frames, GPU lighting off (CPU lit/static reference) ->
+on (GPU lighting, skinning and static paths): lit conversion 69.5 -> 40.8, 93.7 -> 60.8, 74.7 -> 48.4 ms; static
+8.4 -> 5.5 ms; between presents 181.5 -> 149.9, 230.5 -> 194.7, 201.1 -> 172.0, 179.3 -> 153.9 ms. Captures: bottom
+screen identical, top at most 21 pixels one level apart. Minimum linear free unchanged (124 -> 123 KiB). Azahar only.
+
+Submit-time split (profile timing line, "world draw calls"): of 14-36 ms submit per busy frame, the world draw-call
+loop is 5-18 ms, the rest the copy / clip pass and the sky. Rejected experiment: skipping per-batch state and uniform
+uploads that equal the previous batch's cut the draw-call loop by 1.0-2.6 ms with pixel-identical captures; the
+whole frame (between presents, which excludes the present itself, + wait + submit) shrank by the same 1.3-2.6 ms of
+~165-230 ms (~1%), judged not worth ~60 lines of state tracking, so it was reverted (diff kept privately).
+
+Rejected: `-O3` for the generated code (`Y_GEN=-O3`, text 11.6 -> 12.05 MB). Azahar, same route: whole-frame times
+equal to -O2 within 0.3 ms in every window, but the captures differ (~496k pixels over 10 frames), i.e. the
+translated code's results changed; with no measured gain and changed behaviour, -O2 stays. (Azahar does not model
+the ARM11 instruction cache, so code-size effects of optimisation levels need hardware.)
+
+Rejected: frame-time driven static detail (`x_autodetail=<fps>`: the static vertex budget followed the smoothed frame
+time, 10% down / 5% up every 15 frames, floor 12k). Azahar at target 8 fps: the budget sat at the floor, the
+distance cut and fog came in to 30-80 m, and the whole frame improved only 3-6 ms (2-4%). With static conversion now
+cheap, cutting static geometry no longer buys much; REGTA's budgets pay off because they cut game-side work (crowds,
+traffic, LOD), which here is the translated game code. Reverted (diff kept privately).
+
+Texture decode time (new profile line "Citro3D texture decode time", tc_convert + C3D_TexInit + swizzle per 120
+frames): Azahar, New mode, scripted route: 0-1417 ms per 120-frame window in gameplay, mean ~3.5 ms per frame, the
+busiest window ~11.8 ms per frame, in bursts (streaming). Build-time conversion (REGTA's TXD cache idea) would trade
+this for SD reads of pre-converted data; worth it mainly for stutter and memory (ETC1 is 1/8 of RGBA8) - the hardware
+log decides the priority.
+
+Hardware-register traps (`hle.memtrap`, ~1-2.5k per iteration): profile builds now log an address histogram ("MMIO slow
+path ... top registers"). Nearly all are the scratchpad-to-RAM DMA channel (fromSPR, channel 8): CHCR 0x1000D000 (~35%,
+start + busy polls), SADR 0x1000D080, QWC 0x1000D020, MADR 0x1000D010 (~14% each) and 0x1000E100, i.e. ~6-7 register
+accesses per scratchpad copy, issued from many call sites (render driver 0x34xxxx, the per-mesh callback 0x4CEFF0,
+entity code). The profiler's ~5 us per access is mostly its own sampling cost; each access also takes a safe point
+(interrupt / thread-switch delivery), so a fast path would risk timing behaviour for an estimated ~1-2 ms per frame.
+Not pursued until the hardware profile shows it matters.
+
+Experiment, not enabled: `x_texup=0` (ps2rc.cfg; `hle_render.c`) skips the driver's GS texture-cache access 0x368B58,
+which places rasters in GS memory and builds upload packets (0x34EAF8) that this renderer never uses; the profiler
+puts it at 8-14 ms per iteration (sampled, ~35 us per call, 245-425 calls). A run with it showed correctly textured
+3D frames and a complete bottom-screen HUD, but skipping guest code changes the virtual time per frame, so the
+scripted route diverged (CJ ran into a wall) and neither pixel nor timing comparison with the reference is valid.
+Default stays 1 (the original); it needs a non-scripted visual check (or hardware) before any default change.
+
 ## Soak stall at virtual 315.76 s (2026-11-17)
 
 The first 70-minute soak (HUD + GPU light, scripted route: cheats, then sprinting back and forth in the train tunnel

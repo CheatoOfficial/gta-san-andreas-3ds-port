@@ -15,6 +15,9 @@ to `session.log`. It is a measurement build, not a playable one.
    reading it. **Never attach the raw `session.log` or any `gpu-frame-*.ppm` capture**: they can contain game-derived
    data (addresses, instruction words, texture details, rendered game images), which this project may not distribute.
 
+To compare a hardware log with an emulator log of the same build (numbers only, window by window):
+`python 3ds-port/scripts/compare-logs.py emulator-session.log hardware-session.log`.
+
 Look for these lines in the log:
 
 * `Citro3D timing (120 frames, ms/frame): between-presents ...` frame pacing (Azahar reference: ~230-340 ms)

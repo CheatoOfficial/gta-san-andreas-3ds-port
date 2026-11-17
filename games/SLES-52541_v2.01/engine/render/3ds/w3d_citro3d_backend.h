@@ -12,6 +12,7 @@ typedef struct {
     float far_z, fog_z;
     unsigned screen;            /* W3D_C3D_SCREEN_* of the batch's conversion */
     int gpu_light;              /* >= 0: GPU-lit vertices, parameters w3d_citro3d_frame_gpu_light(index) */
+    const W3dC3dVertex *src;    /* non-NULL: the vertices are a vertex-cache entry (not in the frame buffer) */
 } W3dC3dBatch;
 
 int w3d_citro3d_init(void);

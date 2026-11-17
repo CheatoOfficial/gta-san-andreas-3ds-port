@@ -1,10 +1,13 @@
 # GTA San Andreas 3DS Port
 
 **Unofficial, experimental, not playable yet.** An experimental port of *Grand Theft Auto: San Andreas* (PS2, PAL disc
-**SLES-52541 v2.01**) to the **New Nintendo 3DS / New 2DS XL** family, built on the
-[PS2RC](https://github.com/SandstoneDev/PS2RC) PlayStation 2 recompiler runtime (devkitPro, libctru, Citro3D, PICA200).
-You supply your own copy of the disc; no game files are included.
-An [experimental Old 3DS / original 2DS profile](docs/3DS_OLD_MODEL.md) is also available; full game execution on old hardware is unverified.
+**SLES-52541 v2.01**) to the **Nintendo 3DS family - New 3DS / New 3DS XL / New 2DS XL and Old 3DS / 3DS XL / 2DS** -
+built on the [PS2RC](https://github.com/SandstoneDev/PS2RC) PlayStation 2 recompiler runtime (devkitPro, libctru,
+Citro3D, PICA200). You supply your own copy of the disc; no game files are included.
+One universal build picks its profile at start-up: the full profile on New 3DS models (804 MHz, L2 cache, more
+memory) and a [compact profile](docs/3DS_OLD_MODEL.md) on Old 3DS models (16-bit textures, smaller buffers, a static
+geometry budget, modifier controls). New 3DS is the main target; Old 3DS is supported but slower, and neither has been
+verified on real hardware yet.
 
 > Based on PS2RC by SandstoneDev
 > https://github.com/SandstoneDev/PS2RC
@@ -22,13 +25,29 @@ Take-Two Interactive, Sony Interactive Entertainment or Nintendo. "Grand Theft A
 |---|---|
 | Translation + build | Works: the translated game builds as a 3DSX with devkitPro |
 | Rendering (Azahar emulator) | Draws the city, HUD, minimap, characters, vehicles, fog |
-| Speed (Azahar, New 3DS mode) | **~3-4 frames/s** (the game aims for 25). Not playable |
+| Speed (Azahar, New 3DS mode) | **~5-9 frames/s** in the measured gameplay route, ~4.5 in the busiest scenes (the game aims for 25). Not playable yet |
+| Speed (Azahar, Old 3DS mode) | Slower than New; the GPU vertex paths cut its frame time by 14-17% (see status) |
 | Input | A scripted pad route moves the player in Azahar. **Physical buttons are untested** |
 | Audio | The sound-driver model runs; **no audible output has been verified** |
-| Real hardware | **Never run on a real 3DS.** Emulator speed is probably pessimistic for float code, so hardware may differ |
-| Old 3DS / Old 3DS XL / original 2DS | Universal default build selects compact textures and modifier controls; forced `--model old3ds` remains available. See status for emulator checks and remaining geometry/memory limits. Never run on real old hardware |
+| Long play (Azahar) | A 35-minute scripted soak runs to 735 s of game time without stalls (the former 315 s stall is fixed) |
+| Real hardware | **Not yet run on a real 3DS.** A hardware timing build is being tested; emulator speed may differ from hardware |
+| Old 3DS / Old 3DS XL / original 2DS | Supported by the universal build (compact profile, 64 MB mode); forced `--model old3ds` remains available. See status for emulator checks and remaining geometry/memory limits. Not yet run on real old hardware |
 
 Details, measurements and the open work list: [docs/3DS_STATUS.md](docs/3DS_STATUS.md).
+
+### Recent updates (2026-11-17, all measured in the Azahar emulator)
+
+* **Stability:** the gameplay stall at 315 s of game time is fixed at its source (an uninitialised point in a ped
+  task fed a line-of-sight walk); a guard stays as a backstop.
+* **Bottom screen:** an optional dual-screen HUD (radar, money, clock, wanted level, health/armour, weapon/ammo on the
+  lower screen; `hud_layout = classic` restores the original layout).
+* **GPU geometry, converted once and reused** (the idea REGTA/librw use): lit vehicles and props are lit by the GPU,
+  peds are skinned by the GPU, and static buildings are transformed by the GPU; converted meshes are cached across
+  frames and drawn by reference. Static conversion went from ~17 to ~5 ms per frame, busy-scene lit conversion
+  roughly halved, and frames got 6-10% faster per step (14-17% on Old 3DS).
+* **Frame pacing:** frames no longer wait for the 60 Hz cadence before rendering (-5..-11% per frame).
+* Rejected after measurement (documented in the status page): `-O3` for the translated code, a frame-time detail
+  controller, per-batch state de-duplication.
 
 ![Pipeline: your disc to a 3DSX, all on your machine](docs/img/pipeline.svg)
 
@@ -42,7 +61,8 @@ from the game is game-derived material the PS2RC license does not let us distrib
   images, and issues or pull requests that do will be closed.
 * A PC (Windows 10/11, Linux or macOS), about **15 GB** free disk space, Python 3.11+, git, devkitPro, and
   WSL2 with pspdev (installer script included), or Docker, or a native pspdev toolchain for the conversion step.
-* For hardware: a New 3DS / New 2DS XL with custom firmware, Homebrew Launcher and about 4 GB on the SD card.
+* For hardware: a New 3DS / New 3DS XL / New 2DS XL (recommended) or an Old 3DS / 3DS XL / 2DS, with custom
+  firmware, the Homebrew Launcher and about 4 GB on the SD card.
 
 Everything made from your disc (translated C, staged assets, 3DSX builds, logs, captures) stays on your machine
 under `3ds-work/`, which is git-ignored. **Never share, commit or upload any of it.** A heuristic guard script

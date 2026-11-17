@@ -28,7 +28,7 @@
 #error HLE_3DS_GPU_LIGHT needs HLE_3DS_GPU_CLIP
 #endif
 static W3dGpuLight *gpu_lights;           /* one per batch slot (HLE_3DS_GPU_LIGHT) */
-static unsigned gpu_lit_batches, gpu_lit_fallbacks;
+static unsigned gpu_lit_batches, gpu_lit_fallbacks, gpu_static_batches, gpu_static_fallbacks;
 #ifndef HLE_3DS_CAPTURE_START_FRAME
 #define HLE_3DS_CAPTURE_START_FRAME 0
 #endif
@@ -114,6 +114,7 @@ static void record_batch_light(unsigned first_vertex, unsigned vertex_count, uns
     }
     batch->screen = screen;
     batch->gpu_light = gpu_light;
+    batch->src = NULL;
 }
 
 int w3d_citro3d_init(void)
@@ -125,6 +126,9 @@ int w3d_citro3d_init(void)
 #if HLE_3DS_GPU_LIGHT
     gpu_lights=malloc(sizeof(*gpu_lights)*W3D_C3D_BATCH_CAPACITY);
     if (!gpu_lights) { w3d_citro3d_shutdown(); return 0; }
+    /* converted non-skinned lit ranges kept across frames (adapter); the compact (Old 3DS) profile has no room */
+    w3d_citro3d_lit_cache_config(hle_3ds_active_profile->compact ? 0u : 5u * 1024u * 1024u);
+    w3d_citro3d_cache_by_ref = 1;             /* cache hits are drawn from the cache (the present pass copies them) */
 #endif
     if (frame_vertices && temporary_vertices && frame_batches) return 1;
     w3d_citro3d_shutdown(); return 0;
@@ -140,6 +144,7 @@ void w3d_citro3d_shutdown(void)
 void w3d_citro3d_frame_reset(void)
 {
     if (!w3d_citro3d_init()) { frame_error=-1; return; }
+    w3d_citro3d_cache_new_frame();            /* the previous frame is presented: its by-reference entries are free */
     frame_vertex_count = 0;
     frame_static_verts = 0;
     static_cut_band = w3d_citro3d_static_cut_band(static_band_estimate,
@@ -171,9 +176,14 @@ static uint64_t conv_ticks[2], conv_verts[2], conv_calls[2];
 void w3d_citro3d_log_static_cut(unsigned frames)
 {
 #if HLE_3DS_GPU_LIGHT
-    LOG("Citro3D GPU lighting (%u frames, per frame): %u batches, %u CPU fallbacks\n", frames,
-        gpu_lit_batches / frames, gpu_lit_fallbacks / frames);
-    gpu_lit_batches = gpu_lit_fallbacks = 0;
+    uint64_t sc[4];
+    w3d_citro3d_static_cache_stats(sc);
+    LOG("Citro3D GPU lighting (%u frames, per frame): %u batches, %u CPU fallbacks | GPU static %u batches, %u CPU "
+        "fallbacks, cache %llu hits %llu verts / %llu misses %llu verts\n", frames,
+        gpu_lit_batches / frames, gpu_lit_fallbacks / frames, gpu_static_batches / frames, gpu_static_fallbacks / frames,
+        (unsigned long long)(sc[0] / frames), (unsigned long long)(sc[2] / frames), (unsigned long long)(sc[1] / frames),
+        (unsigned long long)(sc[3] / frames));
+    gpu_lit_batches = gpu_lit_fallbacks = gpu_static_batches = gpu_static_fallbacks = 0;
 #endif
     LOG("Citro3D static distance cut (%u frames, per frame): %u meshes skipped, cut now %s%u m, fog limit %.0f m\n",
         frames, distance_skipped / frames, static_cut_band < W3D_C3D_DEPTH_BANDS ? "" : "none ",
@@ -315,6 +325,23 @@ void w3d_be_range(const W3dMeshView *mesh, const uint8_t *verts_override, uint32
                                                    out, cap);
             screen = w3d_citro3d_take_screen();
         }
+    } else if (!is_lit && mesh && gpu_lights && frame_batch_count < W3D_C3D_BATCH_CAPACITY) {
+        /* GPU static: object-space vertices, camera x world and the material step in the shader (objmode); the
+           same CPU fallback as GPU-lit */
+        W3dGpuLight *object = &gpu_lights[frame_batch_count];
+        written = w3d_citro3d_convert_mesh_range_gpu(&current_camera, current_world, &current_state, mesh,
+                                                     verts_override, first_vert, prims, nprims, out, cap, object);
+        screen = w3d_citro3d_take_screen();
+        if (written > 0 && !((screen & W3D_C3D_SCREEN_NONFINITE) ||
+                             (current_draw_state.fog && (screen & W3D_C3D_SCREEN_BEHIND)))) {
+            gpu_light = (int)frame_batch_count;
+            ++gpu_static_batches;
+        } else if (written > 0) {
+            ++gpu_static_fallbacks;
+            written = w3d_citro3d_convert_mesh_range(&current_camera, current_world, &current_state, mesh,
+                                                     verts_override, first_vert, prims, nprims, out, cap);
+            screen = w3d_citro3d_take_screen();
+        }
     } else
 #endif
     {
@@ -344,6 +371,14 @@ void w3d_be_range(const W3dMeshView *mesh, const uint8_t *verts_override, uint32
             return;
         }
         frame_error = written;
+        return;
+    }
+    if (gpu_light >= 0 && w3d_citro3d_cache_hit) {
+        /* a vertex-cache hit taken by reference: nothing was written to the frame buffer */
+        frame_vertex_count = frame_start;
+        const unsigned before = frame_batch_count;
+        record_batch_light(frame_start, (unsigned)written, screen, gpu_light);
+        if (frame_batch_count > before) frame_batches[frame_batch_count - 1].src = w3d_citro3d_cache_hit;
         return;
     }
     frame_vertex_count = (unsigned)(out - frame_vertices) + (unsigned)written;
