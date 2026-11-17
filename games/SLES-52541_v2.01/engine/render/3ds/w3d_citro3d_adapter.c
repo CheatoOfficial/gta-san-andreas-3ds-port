@@ -452,7 +452,9 @@ static int skin_pack(const W3dLitLayout *layout, int nbones, const uint8_t *v, f
         total += weight;
     }
     /* the conservative near bound needs weights that sum to one (within byte quantisation) */
-    return used == 0 || (total > 0.97f && total < 1.03f);
+    /* the near bound (skin_screen) allows for sums in (0.97, 1.03); an all-zero vertex blends to the origin
+       whatever the bones, outside that bound, so it takes the CPU path */
+    return used > 0 && total > 0.97f && total < 1.03f;
 }
 
 static int lit_emit(const LitEmit *e, uint32_t index, W3dC3dVertex *o)
@@ -493,6 +495,9 @@ static void skin_screen(const float near_row[4], int nbones, const float bones[8
                         const float hi[3])
 {
 #if HLE_3DS_GPU_CLIP
+    /* near(x) = n.x + d is affine: for weights w with sum s, near(sum w q) = sum w near(q) + d (1 - s)
+       >= s * min near(q) - |s - 1| |d| >= 0.97 * min - 0.03 * |d| for the sums skin_pack accepts */
+    float lowest = INFINITY;
     for (int b = 0; b < nbones && b < 8; ++b) {
         const float *m = bones[b];
         for (int i = 0; i < 12; ++i) screen_sum += m[i];
@@ -501,9 +506,11 @@ static void skin_screen(const float near_row[4], int nbones, const float bones[8
             float q[3];
             for (int k = 0; k < 3; ++k) q[k] = c[0] * m[k] + c[1] * m[3 + k] + c[2] * m[6 + k] + m[9 + k];
             const float near = near_row[0] * q[0] + near_row[1] * q[1] + near_row[2] * q[2] + near_row[3];
-            if (!(near >= 0.0f)) { screen_behind = 1; return; }
+            if (near != near) { screen_behind = 1; return; }   /* NaN: the checked CPU path */
+            if (near < lowest) lowest = near;
         }
     }
+    if (!(0.97f * lowest - 0.03f * fabsf(near_row[3]) >= 0.0f)) screen_behind = 1;
 #else
     (void)near_row; (void)nbones; (void)bones; (void)lo; (void)hi;
 #endif
