@@ -446,6 +446,26 @@ Both are now the defaults in 3DS release builds only (profile builds keep 0 so f
 comparable); `ps2rc.cfg` overrides. Verified in a release build with no cfg: 'config: x_pace=2' and
 'boot pacing: x_bootpace=1' logged, loading at 1x.
 
+## Where gameplay frame time goes, and the GPU-lit conversion cache (2026-11-17)
+
+Profile attribution (private Azahar, New mode, scripted route, profile builds; temporary zones under 0x2EF270, since
+removed): the "weather / effects" label on 0x2EF270 was misleading. Its 30-60 ms of self time sat in 0x369E18 (the
+driver's Im3D RenderIndexedPrimitive) and below it in 0x36B968, the driver's pipeline executor, because the HLE
+immediate-mode draw (`hle_w3d_imm.c`) first flushes every deferred building batch (`w3d_defer_flush`). Per main-loop
+iteration (141-175 ms): render pipeline incl. that flush 61-86 ms (static conversion ~17 ms, lit ~10-25 ms, the
+rest per-batch work), camera_show 18-22 ms, audio ~10 ms, render_list_build ~7 ms. Most lit vertices are skinned
+peds (7k-12.5k per frame against 1.7k-11.7k non-skinned).
+
+GPU-lit conversion cache (`w3d_citro3d_adapter.c`, `HLE_3DS_LIT_CACHE`, default on; 3 MiB on the full profile, off on
+the compact one): with GPU lighting a non-skinned lit vertex is object-space data, so a converted range is kept and
+copied on the next draw. The key includes a hash of the vertex bytes and primitive words read, so reused memory is a
+miss; only the per-draw near screening is redone. Host test (`adapter-equiv`): 300 random cases, miss / hit /
+uncached outputs bit-identical, changed vertex at the same address never served (both GPU_CLIP settings).
+Same route, same frames (identical vertex counts), lit conversion per frame before -> after: 20.9 -> 16.0,
+10.5 -> 10.1, 10.7 -> 10.1, 14.7 -> 13.7, 24.6 -> 20.1 ms; between presents 143.5 -> 138.6, 114.5 -> 114.0,
+122.4 -> 121.8, 137.6 -> 136.7, 152.8 -> 148.4 ms. Hits cover almost every non-skinned range; the remaining lit time
+is CPU skinning. A small win (0.5-5 ms per frame) in Azahar; not measured on hardware.
+
 ## Soak stall at virtual 315.76 s (2026-11-17)
 
 The first 70-minute soak (HUD + GPU light, scripted route: cheats, then sprinting back and forth in the train tunnel

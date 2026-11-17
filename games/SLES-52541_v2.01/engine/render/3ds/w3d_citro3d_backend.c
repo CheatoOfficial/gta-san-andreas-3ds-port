@@ -125,6 +125,8 @@ int w3d_citro3d_init(void)
 #if HLE_3DS_GPU_LIGHT
     gpu_lights=malloc(sizeof(*gpu_lights)*W3D_C3D_BATCH_CAPACITY);
     if (!gpu_lights) { w3d_citro3d_shutdown(); return 0; }
+    /* converted non-skinned lit ranges kept across frames (adapter); the compact (Old 3DS) profile has no room */
+    w3d_citro3d_lit_cache_config(hle_3ds_active_profile->compact ? 0u : 3u * 1024u * 1024u);
 #endif
     if (frame_vertices && temporary_vertices && frame_batches) return 1;
     w3d_citro3d_shutdown(); return 0;

@@ -964,6 +964,18 @@ void hle_3ds_gfx_present(void)
                 (double)ct[1] * ms, (unsigned long long)(cv[1] / 120u), (unsigned long long)(cc[1] / 120u));
             LOG("Citro3D budget skips (120 frames, per frame): %u static meshes\n", w3d_citro3d_budget_skipped() / 120u);
             w3d_citro3d_log_static_cut(120u);
+#if HLE_3DS_GPU_LIGHT
+            {
+                uint64_t lc[7];
+                size_t lc_bytes = 0;
+                w3d_citro3d_lit_cache_stats(lc, &lc_bytes);
+                LOG("Citro3D lit cache (120 frames, per frame): %llu hits %llu verts | %llu misses %llu verts | skinned %llu verts | "
+                    "evicted %llu, no memory %llu, %u KiB held\n", (unsigned long long)(lc[0] / 120u),
+                    (unsigned long long)(lc[2] / 120u), (unsigned long long)(lc[1] / 120u), (unsigned long long)(lc[3] / 120u),
+                    (unsigned long long)(lc[4] / 120u), (unsigned long long)lc[5], (unsigned long long)lc[6],
+                    (unsigned)(lc_bytes / 1024u));
+            }
+#endif
             hle_plat_log_flush();
             acc_wait = acc_submit = acc_end = acc_gap = 0; acc_n = 0;
         }

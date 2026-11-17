@@ -1,6 +1,7 @@
 #ifndef W3D_CITRO3D_ADAPTER_H
 #define W3D_CITRO3D_ADAPTER_H
 
+#include <stddef.h>
 #include "hle_w3d.h"
 
 typedef struct {
@@ -42,6 +43,10 @@ typedef struct {
     float dir[4][3], col[4][3];                /* unused lights have zero colour */
     float post_mul[4], post_add[3];            /* material step: rgb = add + c * mul, a = a * mul.a (identity: 1, 0) */
 } W3dGpuLight;
+/* GPU-lit conversion cache (HLE_3DS_LIT_CACHE): budget in bytes (0 = off); stats since the last call: hits, misses,
+   hit vertices, miss vertices, skinned (uncacheable) vertices, evictions, allocation failures */
+void w3d_citro3d_lit_cache_config(size_t budget_bytes);
+void w3d_citro3d_lit_cache_stats(uint64_t out[7], size_t *bytes);
 int w3d_citro3d_convert_lit_range_gpu(const W3dCam *camera, const float world[12], const W3dState *state,
                                      const W3dState *lit_state, const W3dLights *lights, int nbones,
                                      const float bones[8][12], const W3dMeshView *mesh, const uint8_t *verts_override,

@@ -3,6 +3,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifndef HLE_3DS_LIGHTING_DEBUG
@@ -455,6 +456,107 @@ static int lit_emit(const LitEmit *e, uint32_t index, W3dC3dVertex *o)
     return 1;
 }
 
+
+/* Cache of GPU-lit conversions (HLE_3DS_LIT_CACHE). With GPU lighting a non-skinned lit vertex is object-space data
+   (position, normal, UV after the draw's UV scale): it depends only on the mesh bytes and the UV parameters, not on
+   the camera, the world matrix or the lights. Vehicles and props are drawn every frame from the same guest mesh, so
+   the converted range is kept and copied on the next draw instead of decoded again (the REGTA/librw idea of
+   instancing a mesh once). The key holds a hash of the vertex bytes and primitive words actually read, so a model
+   streamed into reused memory is a miss, never stale geometry. Only the per-draw near screening is redone on a hit
+   (one dot product per vertex), so the CPU-fallback decision is unchanged. Budget 0 = off (set by the backend). */
+#ifndef HLE_3DS_LIT_CACHE
+#define HLE_3DS_LIT_CACHE 1
+#endif
+#if HLE_3DS_LIT_CACHE
+#define LIT_CACHE_SLOTS 2048u            /* power of two */
+#define LIT_CACHE_PROBE 8u
+typedef struct {
+    uintptr_t vertices;
+    uint32_t first_vert, count, nprims, vtype, stride, hash, uvbits[3];
+    W3dC3dVertex *data;                  /* NULL = empty slot */
+    int written;
+    uint32_t stamp;
+    float sum;                           /* the screen_sum contribution of the stored vertices */
+} LitCacheEntry;
+static LitCacheEntry lit_cache[LIT_CACHE_SLOTS];
+static size_t lit_cache_budget, lit_cache_bytes;
+static uint32_t lit_cache_clock;
+static uint64_t lc_hits, lc_misses, lc_hit_verts, lc_miss_verts, lc_skinned_verts, lc_evicted, lc_nomem;
+
+void w3d_citro3d_lit_cache_config(size_t budget_bytes)
+{
+    lit_cache_budget = budget_bytes;
+}
+
+void w3d_citro3d_lit_cache_stats(uint64_t out[7], size_t *bytes)
+{
+    out[0] = lc_hits; out[1] = lc_misses; out[2] = lc_hit_verts; out[3] = lc_miss_verts;
+    out[4] = lc_skinned_verts; out[5] = lc_evicted; out[6] = lc_nomem;
+    lc_hits = lc_misses = lc_hit_verts = lc_miss_verts = lc_skinned_verts = lc_evicted = lc_nomem = 0;
+    if (bytes) *bytes = lit_cache_bytes;
+}
+
+static uint32_t lc_words(uint32_t h, const uint8_t *p, size_t n)
+{
+    size_t i = 0;
+    for (; i + 4 <= n; i += 4) {
+        uint32_t w;
+        memcpy(&w, p + i, 4);
+        h = (h ^ w) * 0x01000193u;
+    }
+    for (; i < n; ++i) h = (h ^ p[i]) * 0x01000193u;
+    return h;
+}
+
+static uint32_t lc_slot(const LitCacheEntry *k)
+{
+    uint32_t h = k->hash ^ (uint32_t)k->vertices * 0x9E3779B1u ^ k->first_vert * 0x85EBCA77u ^ k->count * 0xC2B2AE3Du;
+    h ^= h >> 15;
+    return h & (LIT_CACHE_SLOTS - 1u);
+}
+
+static int lc_same(const LitCacheEntry *a, const LitCacheEntry *b)
+{
+    return a->vertices == b->vertices && a->first_vert == b->first_vert && a->count == b->count &&
+           a->nprims == b->nprims && a->vtype == b->vtype && a->stride == b->stride && a->hash == b->hash &&
+           !memcmp(a->uvbits, b->uvbits, sizeof a->uvbits);
+}
+
+static void lc_drop(LitCacheEntry *e)
+{
+    if (!e->data) return;
+    free(e->data);
+    lit_cache_bytes -= (size_t)e->written * sizeof(W3dC3dVertex);
+    e->data = NULL;
+    ++lc_evicted;
+}
+
+/* evict the least recently used entries until the cache is below 3/4 of its budget */
+static void lc_shrink(void)
+{
+    while (lit_cache_bytes > lit_cache_budget / 4u * 3u) {
+        LitCacheEntry *oldest = NULL;
+        for (uint32_t i = 0; i < LIT_CACHE_SLOTS; ++i)
+            if (lit_cache[i].data && (!oldest || (int32_t)(lit_cache[i].stamp - oldest->stamp) < 0)) oldest = &lit_cache[i];
+        if (!oldest) break;
+        lc_drop(oldest);
+    }
+}
+
+/* the near-plane screening of a stored vertex (lit_emit's, without the decode) */
+static void lc_screen(const float near_row[4], const W3dC3dVertex *v, int n)
+{
+#if HLE_3DS_GPU_CLIP
+    for (int i = 0; i < n; ++i) {
+        const float near = near_row[0] * v[i].clip[0] + near_row[1] * v[i].clip[1] + near_row[2] * v[i].clip[2] + near_row[3];
+        if (!(near >= 0.0f)) { screen_behind = 1; return; }
+    }
+#else
+    (void)near_row; (void)v; (void)n;
+#endif
+}
+#endif
+
 static int lit_range(const W3dCam *camera, const float world[12], const W3dState *state,
                      const W3dState *lit_state, const W3dLights *lights, int nbones,
                      const float bones[8][12], const W3dMeshView *mesh, const uint8_t *verts_override,
@@ -515,6 +617,48 @@ static int lit_range(const W3dCam *camera, const float world[12], const W3dState
             for (int c = 0; c < 3; ++c) gpu->post_add[c] = 0.0f;
         }
     }
+#if HLE_3DS_LIT_CACHE
+    LitCacheEntry key, *slot = NULL;
+    if (gpu && nbones > 0) lc_skinned_verts += required;
+    if (gpu && nbones == 0 && lit_cache_budget && required) {
+        memset(&key, 0, sizeof key);
+        key.vertices = (uintptr_t)vertices;
+        key.first_vert = first_vert;
+        key.count = (uint32_t)consumed;
+        key.nprims = nprims;
+        key.vtype = mesh->vtype;
+        key.stride = mesh->stride;
+        memcpy(&key.uvbits[0], &state->uscale, 4);
+        memcpy(&key.uvbits[1], &state->ubase, 4);
+        memcpy(&key.uvbits[2], &state->vbase, 4);
+        uint32_t h = lc_words(0x811C9DC5u, vertices + (size_t)first_vert * mesh->stride, (size_t)consumed * mesh->stride);
+        key.hash = lc_words(h, (const uint8_t *)prim_words, (size_t)nprims * 4u);
+        const uint32_t home = lc_slot(&key);
+        LitCacheEntry *empty = NULL, *oldest = NULL;
+        for (uint32_t k = 0; k < LIT_CACHE_PROBE; ++k) {
+            LitCacheEntry *e = &lit_cache[(home + k) & (LIT_CACHE_SLOTS - 1u)];
+            if (e->data && lc_same(e, &key)) {
+                e->stamp = ++lit_cache_clock;
+                memcpy(output, e->data, (size_t)e->written * sizeof *output);
+#if HLE_3DS_GPU_CLIP
+                screen_sum += e->sum;
+#endif
+                lc_screen(emit.near_row, output, e->written);
+                ++lc_hits;
+                lc_hit_verts += (uint64_t)e->written;
+                return e->written;
+            }
+            if (!e->data && !empty) empty = e;
+            if (e->data && (!oldest || (int32_t)(e->stamp - oldest->stamp) < 0)) oldest = e;
+        }
+        slot = empty ? empty : oldest;   /* filled after the conversion below */
+        ++lc_misses;
+        lc_miss_verts += required;
+    }
+#if HLE_3DS_GPU_CLIP
+    const float sum_before = screen_sum;
+#endif
+#endif
     int written = 0;
     uint32_t vertex_base = 0;
     for (uint32_t i = 0; i < nprims; ++i) {
@@ -550,6 +694,31 @@ static int lit_range(const W3dCam *camera, const float world[12], const W3dState
         }
         vertex_base += input_count;
     }
+#if HLE_3DS_LIT_CACHE
+    if (slot && written > 0) {
+        const size_t bytes = (size_t)written * sizeof(W3dC3dVertex);
+        if (bytes <= lit_cache_budget / 8u) {
+            lc_drop(slot);
+            if (lit_cache_bytes + bytes > lit_cache_budget) lc_shrink();
+            W3dC3dVertex *data = (W3dC3dVertex *)malloc(bytes);
+            if (data) {
+                *slot = key;
+                slot->data = data;
+                slot->written = written;
+                slot->stamp = ++lit_cache_clock;
+#if HLE_3DS_GPU_CLIP
+                slot->sum = screen_sum - sum_before;
+#else
+                slot->sum = 0.0f;
+#endif
+                memcpy(data, output, bytes);
+                lit_cache_bytes += bytes;
+            } else {
+                ++lc_nomem;
+            }
+        }
+    }
+#endif
     return written;
 }
 
