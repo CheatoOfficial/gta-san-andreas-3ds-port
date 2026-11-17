@@ -492,6 +492,13 @@ top screen at most 20 pixels differ by one level (GPU rounding). The remaining s
 vertices (twice: into the frame buffer, then the present pass); drawing straight from the cached buffers is the next
 step. Not measured on hardware.
 
+Experiment, not enabled: `x_texup=0` (ps2rc.cfg; `hle_render.c`) skips the driver's GS texture-cache access 0x368B58,
+which places rasters in GS memory and builds upload packets (0x34EAF8) that this renderer never uses; the profiler
+puts it at 8-14 ms per iteration (sampled, ~35 us per call, 245-425 calls). A run with it showed correctly textured
+3D frames and a complete bottom-screen HUD, but skipping guest code changes the virtual time per frame, so the
+scripted route diverged (CJ ran into a wall) and neither pixel nor timing comparison with the reference is valid.
+Default stays 1 (the original); it needs a non-scripted visual check (or hardware) before any default change.
+
 ## Soak stall at virtual 315.76 s (2026-11-17)
 
 The first 70-minute soak (HUD + GPU light, scripted route: cheats, then sprinting back and forth in the train tunnel
