@@ -455,24 +455,22 @@ with two wanted stars) stopped advancing the main loop at iteration 6875 (virtua
 time in three runs and two emulator copies, in thread 1 at the back-edge 0x27F580 of 0x27E180 (called from 0x1FAF20).
 0x27E180 walks the 120 x 50-unit world sectors along a line (row = floor(y / 50 + 60)); the stalled loop counts rows
 without clamping. Its start vector was (1.62e29, 0, 1): the saturated row index made the loop run ~2^31 times.
-Origin (soak 5, guard logging the caller): the walk is reached from the mission-script command handler 0x1FA8D0
-(ra 0x1FAF28). That handler reads a 16-bit argument from the script bytecode (running script + 20), indexes the
-12-byte vector table at 0x6FEC90 with (arg & 0x7FFF) / 100 and copies the entry to the stack; the first endpoint
-(sp + 0x80 in the callee) arrived as raw words 70030c01 00000000 3f800000, i.e. x is not a coordinate at all
-(1.62e29 as a float), y 0, z 1.0, while the other endpoint was a normal world position (2275.1, -1055.1, 48.7).
-Static check of the translated handler: 0x6FEC90 is BSS (zero in the ELF); 0x1FA8D0 fills it once (flag byte at
-+1260 of its context) by copying constant vectors from 0x5F9A38.. into entries 0-16, 24 and 26 (27 stores); no
-other code writes the table. Entries 17-23 and 25 stay zero, so a zero vector would have come from a gap; the
-non-zero, non-coordinate word 70030c01 means the index (script arg & 0x7FFF) / 100 pointed past entry 26, into
-whatever BSS follows the table. On a PS2 the same out-of-range read would see that console's neighbouring data,
-which plausibly differs from this port's. Still unproven: log the argument/index in 0x1FA8D0 to confirm, then
-decide between a bounds check on the index (guard to a valid entry) or keeping the line-walk clamp.
-Soak 6 (guard searching 4 KiB above sp for 0x1FA8D0's copy of the table entry) found no copy equal to a0: the bad
-endpoint is NOT the table copy, so the table-index hypothesis above is unsupported. a0 (callee sp+0x80) is more
-likely a local of the intermediate function 0x556E50 (the call at 0x1FAF20 goes there) left unset on this path.
-Next: hook/inspect 0x556E50 to see what fills its sp+0x80 before 0x27E180.
+Root cause (soaks 5-9 and the translated code): the bad endpoint (raw words 70030c01 00000000 3f800000; x = 1.62e29,
+y 0, z 1.0) is uninitialised stack. The ped task code at 0x40D8D0.. calls 0x50DAA0(ped, entity, position, out = sp+0x80),
+ignores its return value, adds 1.0 to out.z and walks a line of sight from out (0x27E180). 0x50DAA0 returns 0 on
+several paths without writing out; two of its three callers (0x40DAB0, 0x40E2F4) ignore that. On a PS2 the stale
+stack evidently holds something harmless; on this port it held 70030c01 at virtual 315 s of the soak route.
+(The ra 0x1FAF28 the guard first logged is stale - the script dispatcher's call; translated code writes ra back only
+when needed. The last dispatched script command was 0001 WAIT in 'main', i.e. not a script path.)
+Fix: `src/hle_world_guard.c` hooks 0x50DAA0 and pre-fills out with the input position before the original runs, so
+an unwritten output is a real point; when the original writes, it wins. The line-walk clamp stays as a backstop.
+Soak 9 (fix + clamp, same route, New mode, Azahar): 0x50DAA0 returned 0 four times (virtual 305.4, 312.4, 316.1,
+316.8 s), each time with the pre-filled position; the line-walk clamp never fired; the run ended at its time limit at
+virtual 435 s, main-loop iteration 9896, no stall/fatal/adapter-error lines; one frame (10080) omitted one texture
+(pinned_fail 84 -> 85, a slot still held by an in-flight frame - the known texture-cache behaviour; clean before and
+after). Not yet run on hardware.
 
-Bound (not a root-cause fix): `src/hle_world_guard.c` hooks 0x27E180 and clamps an endpoint's x/y to +-3100 only
+Backstop (added first, kept): `src/hle_world_guard.c` also hooks 0x27E180 and clamps an endpoint's x/y to +-3100 only
 when it is not finite or more than 100 000 units out; valid endpoints (within +-3000) are untouched and the original
 runs. With it, the same soak logged one clamped endpoint at virtual 315.341 s and kept going: main-loop iterations
 6991 at 320 s, 7116 at 325 s, 7241 at 330 s (previously frozen at 6875). The 32-minute run ended at its time limit at virtual

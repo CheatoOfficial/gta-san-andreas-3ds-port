@@ -294,9 +294,5 @@ keep the deterministic defaults; NDSP queue 96 buffers. See `docs/3DS_STATUS.md`
 queue". Performance comparisons must use profile builds (or set x_pace=0).
 
 Soak stall (Claude, 2026-11-17, branch claude/soak-stall): deterministic main-loop stall at virtual 315.76 s in the
-world-sector line walk 0x27E180 (start vector 1.62e29); bounded by `src/hle_world_guard.c`. Open: find where the
-vector comes from. Soak 5 traced it to the mission-script handler 0x1FA8D0 (script argument -> table 0x6FEC90 entry
-(arg & 0x7FFF)/100; the entry held words 70030c01 0 3f800000). Next: log the argument/index and compare the table
-with a PS2 run. Static check: the table is filled lazily with 27 entries (0-16, 24, 26), so the bad index points
-past the table - but soak 6 found no stack copy equal to the bad endpoint, so that is unsupported; next suspect is
-an unset local (sp+0x80) in 0x556E50. See `docs/3DS_STATUS.md`, "Soak stall".
+world-sector line walk 0x27E180 (start vector 1.62e29); bounded by `src/hle_world_guard.c`. Root cause: 0x50DAA0 can return 0 without writing its output and callers 0x40DAB0/0x40E2F4 use it anyway
+(uninitialised stack); fixed by pre-filling the output (hook in the same file). See `docs/3DS_STATUS.md`, "Soak stall".

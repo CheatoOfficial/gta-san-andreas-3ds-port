@@ -195,6 +195,9 @@ HOOK(00291f20, vis_set_camera)
 /* world-sector line walk: bounds endpoints far outside the world before the walk (src/hle_world_guard.c; a 3DS soak
    stalled in its unclamped row loop with a start vector of 1.62e29) */
 HOOK(0027e180, world_line_sectors)
+/* ped target point: can return 0 without writing its output, and two callers (0x40DAB0, 0x40E2F4) use the output
+   anyway; the hook pre-fills it with the input position (src/hle_world_guard.c) */
+HOOK(0050daa0, ped_target_point)
 
 /* ---- 3D world (hle_w3d.c): the mesh node body every one of the game's mesh pipelines runs; building atomics are
    drawn by the PSP GE (ps2rc.cfg world3d and the guest-pipeline switch), everything else - and every atomic when
