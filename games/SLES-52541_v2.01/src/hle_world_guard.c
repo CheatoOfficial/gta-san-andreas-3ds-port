@@ -32,9 +32,34 @@ static int clamp_component(uint32_t address)
     return 1;
 }
 
+/* where the out-of-world endpoint came from: the caller's return address and both endpoints before the clamp */
+static void log_origin(R5900Ctx *c)
+{
+    LOG("world guard: caller ra %08x sp %08x", (unsigned)c->r[31].d[0], (unsigned)c->r[29].d[0]);
+    for (int r = 4; r <= 5; ++r) {
+        const uint32_t vec = (uint32_t)c->r[r].d[0];
+        LOG(" | a%d %08x", r - 4, vec);
+        if (vec + 12u <= hle_ram_end && !(vec & 3u))
+            for (int k = 0; k < 3; ++k) LOG(" %08x", gw(vec + 4u * (uint32_t)k));
+    }
+    LOG("\n");
+}
+
 HLE_FN(world_line_sectors)
 {
     int fixed = 0;
+    for (int r = 4; r <= 5; ++r) {
+        const uint32_t vec = (uint32_t)c->r[r].d[0];
+        for (int k = 0; k < 2 && !fixed; ++k) {
+            const uint32_t a = vec + 4u * (uint32_t)k;
+            if (a + 4u > hle_ram_end || (a & 3u)) continue;
+            const uint32_t raw = gw(a);
+            float v;
+            memcpy(&v, &raw, sizeof v);
+            if (!(isfinite(v) && v >= -100000.0f && v <= 100000.0f)) { if (guarded < 16) log_origin(c); fixed = -1; }
+        }
+    }
+    fixed = 0;
     for (int r = 4; r <= 5; ++r) {
         const uint32_t vec = (uint32_t)c->r[r].d[0];
         fixed |= clamp_component(vec) | clamp_component(vec + 4u);

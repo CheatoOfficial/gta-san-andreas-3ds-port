@@ -455,7 +455,14 @@ with two wanted stars) stopped advancing the main loop at iteration 6875 (virtua
 time in three runs and two emulator copies, in thread 1 at the back-edge 0x27F580 of 0x27E180 (called from 0x1FAF20).
 0x27E180 walks the 120 x 50-unit world sectors along a line (row = floor(y / 50 + 60)); the stalled loop counts rows
 without clamping. Its start vector was (1.62e29, 0, 1): the saturated row index made the loop run ~2^31 times.
-The origin of that vector is not known (possibly uninitialised stack data that differs from a PS2).
+Origin (soak 5, guard logging the caller): the walk is reached from the mission-script command handler 0x1FA8D0
+(ra 0x1FAF28). That handler reads a 16-bit argument from the script bytecode (running script + 20), indexes the
+12-byte vector table at 0x6FEC90 with (arg & 0x7FFF) / 100 and copies the entry to the stack; the first endpoint
+(sp + 0x80 in the callee) arrived as raw words 70030c01 00000000 3f800000, i.e. x is not a coordinate at all
+(1.62e29 as a float), y 0, z 1.0, while the other endpoint was a normal world position (2275.1, -1055.1, 48.7).
+Leading hypothesis, not yet proven: the script argument indexes past the populated part of the table (or the
+table entry was never filled on this port), so a non-coordinate is used. Next step: log the argument and index in
+0x1FA8D0 and compare the table contents against a PS2 run at the same script point.
 
 Bound (not a root-cause fix): `src/hle_world_guard.c` hooks 0x27E180 and clamps an endpoint's x/y to +-3100 only
 when it is not finite or more than 100 000 units out; valid endpoints (within +-3000) are untouched and the original
