@@ -82,6 +82,11 @@ static C3D_Mtx bottom_projection;
 static int bottom_active;
 static C3D_Tex fog_ramp;
 static int fog_ramp_ready;
+/* what an untextured batch binds on texture unit 1: citro3d 1.7.1's C3D_TexBind(unit > 0, NULL) reads the texture's
+   type through the NULL pointer (a data abort at address 0xC on real hardware; Azahar reads 0 and carries on), so
+   unit 1 always gets a real texture - this 8x8 white one, never sampled by the untextured combiner set-up */
+static C3D_Tex blank_tex;
+static int blank_tex_ready;
 static DVLB_s *shader_dvlb;
 static shaderProgram_s shader_program;
 static C3D_Mtx display_projection;
@@ -259,6 +264,10 @@ int hle_3ds_gfx_init(void)
     C3D_TexSetFilter(&fog_ramp, GPU_LINEAR, GPU_LINEAR);
     C3D_TexSetWrap(&fog_ramp, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
     C3D_TexFlush(&fog_ramp);
+    if (!C3D_TexInit(&blank_tex, 8, 8, GPU_RGBA8)) goto fail;
+    blank_tex_ready = 1;
+    memset(blank_tex.data, 0xFF, 8u * 8u * 4u);
+    C3D_TexFlush(&blank_tex);
     vertex_buffer = linearAlloc(sizeof(Hle3dsVertex) * W3D_C3D_FRAME_VERTEX_CAPACITY);
     overlay_vertex_buffer = linearAlloc(sizeof(Hle3dsVertex) * HLE_3DS_2D_VERTEX_CAPACITY);
     sky_vertex_buffer = linearAlloc(sizeof(Hle3dsVertex) * HLE_3DS_SKY_VERTEX_CAPACITY);
@@ -610,7 +619,7 @@ static void draw_overlay_batches(C3D_TexEnv *environment, unsigned screen)
                 v->uv[1] *= texture->uv_scale_v;
             }
         } else {
-            C3D_TexBind(1, NULL);
+            C3D_TexBind(1, &blank_tex);
             C3D_TexEnvSrc(environment, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
             C3D_TexEnvFunc(environment, C3D_Both, GPU_REPLACE);
         }
@@ -837,7 +846,7 @@ void hle_3ds_gfx_present(void)
            submits this queued pass after opaque world batches. */
         C3D_DepthTest(true, GPU_GEQUAL, GPU_WRITE_COLOR);
         C3D_AlphaTest(false, GPU_GREATER, 0);
-        C3D_TexBind(1, NULL);
+        C3D_TexBind(1, &blank_tex);
         C3D_TexEnvSrc(environment, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
         C3D_TexEnvFunc(environment, C3D_Both, GPU_REPLACE);
         for (unsigned b = 0; b < sky_batch_count; ++b) {
@@ -913,7 +922,7 @@ void hle_3ds_gfx_present(void)
             C3D_TexEnvFunc(environment, C3D_Both, GPU_MODULATE);
 #endif
         } else {
-            C3D_TexBind(1, NULL);
+            C3D_TexBind(1, &blank_tex);
             C3D_TexEnvSrc(environment, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
             C3D_TexEnvFunc(environment, C3D_Both, GPU_REPLACE);
         }
@@ -1084,6 +1093,7 @@ void hle_3ds_gfx_shutdown(void)
     free(overlay_source); overlay_source=NULL;
     free(overlay_batches); overlay_batches=NULL;
     if (fog_ramp_ready) { C3D_TexDelete(&fog_ramp); fog_ramp_ready = 0; }
+    if (blank_tex_ready) { C3D_TexDelete(&blank_tex); blank_tex_ready = 0; }
     if (capture_rgb) { linearFree(capture_rgb); capture_rgb = NULL; }
     if (vertex_buffer) { linearFree(vertex_buffer); vertex_buffer = NULL; }
     if (overlay_vertex_buffer) { linearFree(overlay_vertex_buffer); overlay_vertex_buffer = NULL; }
