@@ -460,7 +460,9 @@ The origin of that vector is not known (possibly uninitialised stack data that d
 Bound (not a root-cause fix): `src/hle_world_guard.c` hooks 0x27E180 and clamps an endpoint's x/y to +-3100 only
 when it is not finite or more than 100 000 units out; valid endpoints (within +-3000) are untouched and the original
 runs. With it, the same soak logged one clamped endpoint at virtual 315.341 s and kept going: main-loop iterations
-6991 at 320 s, 7116 at 325 s, 7241 at 330 s (previously frozen at 6875).
+6991 at 320 s, 7116 at 325 s, 7241 at 330 s (previously frozen at 6875). The 32-minute run ended at its time limit at virtual
+580 s with 13 491 main-loop iterations, one clamp in total, no stall/fatal/adapter-error/texture-omission lines and at
+least 5.9 MiB linear free (New mode, Azahar).
 
 ## Known issues from the pre-publication review (2026-11-15)
 
