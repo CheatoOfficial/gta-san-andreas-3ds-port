@@ -53,6 +53,7 @@ static uint32_t decode_buffer_bytes;
 static size_t cache_bytes, cache_peak_bytes;
 static uint32_t use_clock, frame_serial = 1, gpu_done_serial; /* frames up to gpu_done_serial have finished on the GPU */
 static unsigned decoded_count, decode_failures;
+volatile unsigned hle_3ds_stage;             /* the hang watchdog's stage (hle_3ds_gfx.c: codes) */
 static uint64_t decode_ticks;                 /* tc_convert + C3D_TexInit + decode_to_texture, summed (pressure log) */
 static unsigned fail_bad_pointer, fail_bad_packet, fail_oversize;
 static unsigned fail_pinned_cache, fail_no_slot, fail_tex_init, fail_convert;
@@ -361,6 +362,8 @@ static int texture_prepare(uint32_t raster, int *alpha_class, int overlay)
     slot = choose_slot();
     if (!slot) { ++decode_failures; ++fail_no_slot; return 0; }
     if (slot->valid) slot_drop(slot);
+    const unsigned stage_before = hle_3ds_stage;
+    hle_3ds_stage = 10;
     const uint64_t decode_t0 = svcGetSystemTick();
     error = info.plan.total_bytes > decode_buffer_bytes ? TC_ERR_SIZE :
         tc_convert(&info.decoded, &info.policy, &info.plan, decode_buffer, decode_buffer_bytes);
@@ -375,6 +378,7 @@ static int texture_prepare(uint32_t raster, int *alpha_class, int overlay)
     int alpha = 0;
     error = decode_to_texture(&info, &slot->texture.tex, &alpha);
     decode_ticks += svcGetSystemTick() - decode_t0;
+    hle_3ds_stage = stage_before;
     if (error) {
         C3D_TexDelete(&slot->texture.tex);
         memset(slot, 0, sizeof(*slot));

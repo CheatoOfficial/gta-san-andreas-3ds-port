@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 #include "hle.h"
 #include "hle_plat.h"
 #include "hle_memcard.h"
@@ -143,14 +144,25 @@ void hle_plat_log_write(const char *text, size_t size)
 {
     if (!session_log) {
         char path[HLE_3DS_PATH_MAX];
-        if (resolve_path("session.log", path, sizeof(path))) session_log = fopen(path, "wb");
+        if (resolve_path("session.log", path, sizeof(path))) {
+            /* create, close (commits the directory entry to the card), then append: a session that ends by a forced
+               power-off (a hang on real hardware) still leaves its log behind */
+            FILE *created = fopen(path, "wb");
+            if (created) fclose(created);
+            session_log = fopen(path, "ab");
+        }
     }
     if (session_log) fwrite(text, 1, size, session_log);
 }
 
 void hle_plat_log_flush(void)
 {
-    if (session_log) fflush(session_log);
+    if (!session_log) return;
+    fflush(session_log);
+    /* FSFILE_Flush at most once a second: the data reaches the card, not only a cache, without slowing timing runs */
+    static uint64_t last_sync;
+    const uint64_t now = svcGetSystemTick();
+    if (now - last_sync >= SYSCLOCK_ARM11) { last_sync = now; fsync(fileno(session_log)); }
 }
 
 void hle_plat_milestone(const char *line)

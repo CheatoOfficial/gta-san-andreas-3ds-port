@@ -204,6 +204,47 @@ static void fog_environment(int enabled, uint32_t color)
     C3D_DirtyTexEnv(env);
 }
 
+
+/* Hang watchdog (profile builds): a thread of higher priority than the game on the same core wakes every second; when
+   neither the presented frame count nor the virtual time has moved for 10 s it logs where the main thread is - the
+   present stage below (0 = game / HLE code outside the present), the frame, the virtual time and the guest's last
+   loop back-edge - and flushes the log, every 10 s while the hang lasts. Real-hardware diagnosis: a hang inside a
+   GPU wait never reaches the main-loop stall watchdog (hle_main.c). */
+extern volatile unsigned hle_3ds_stage;       /* (defined in hle_3ds_texture.c) 1 FrameBegin (GPU wait), 2 copy / clip, 3 world draws, 4 overlay,
+                                                 5 flush + FrameEnd, 10 texture decode; 0 elsewhere */
+#if HLE_3DS_PROF
+static volatile unsigned wd_frames;
+static void watchdog_main(void *arg)
+{
+    (void)arg;
+    uint64_t last_v = hle_vtime;
+    unsigned last_f = wd_frames, still = 0;
+    for (;;) {
+        svcSleepThread(1000000000LL);
+        const uint64_t v = hle_vtime;
+        const unsigned f = wd_frames;
+        if (v != last_v || f != last_f) { last_v = v; last_f = f; still = 0; continue; }
+        if (++still % 10u) continue;
+        char line[192];
+        const int n = snprintf(line, sizeof line, "HANG: no frame and no virtual time for %u s: stage %u, frame %u, vtime "
+                               "%.3f s, guest back-edge %08x\n", still, hle_3ds_stage, f, (double)v / EE_HZ,
+                               (unsigned)hle_where);
+        if (n > 0) {
+            hle_plat_log_write(line, (size_t)n);
+            hle_plat_log_flush();
+            if (!hle_3ds_gfx_bottom_owned()) printf("%s", line);   /* on the console too, in case the log is lost */
+        }
+    }
+}
+static void watchdog_start(void)
+{
+    s32 prio = 0x30;
+    svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
+    Thread t = threadCreate(watchdog_main, NULL, 8u * 1024u, prio > 0x19 ? prio - 1 : 0x18, -2, true);
+    LOG("hang watchdog: %s (priority %ld)\n", t ? "on" : "FAILED to start", (long)(prio > 0x19 ? prio - 1 : 0x18));
+}
+#endif
+
 int hle_3ds_gfx_init(void)
 {
     if (!w3d_citro3d_init() || !hle_3ds_texture_init()) goto fail;
@@ -300,6 +341,9 @@ int hle_3ds_gfx_init(void)
     }
 #endif
     gfx_ready = 1;
+#if HLE_3DS_PROF
+    watchdog_start();
+#endif
     w3d_citro3d_frame_reset();
     return 1;
 
@@ -641,7 +685,9 @@ void hle_3ds_gfx_present(void)
        60 Hz frame-rate wait, which only costs time (~half a vblank per frame) while frames take far longer than
        16.7 ms. */
     const uint64_t tick_pre = svcGetSystemTick();
+    hle_3ds_stage = 1;
     C3D_FrameBegin(0);
+    hle_3ds_stage = 2;
     const uint64_t tick_begin = svcGetSystemTick();
     hle_3ds_texture_gpu_synced();
     const W3dC3dVertex *source = w3d_citro3d_frame_vertices();
@@ -856,6 +902,7 @@ void hle_3ds_gfx_present(void)
             C3D_DrawArrays(GPU_TRIANGLES, (int)batch->first, (int)batch->count);
         }
     }
+    hle_3ds_stage = 3;
     const uint64_t tick_draw0 = svcGetSystemTick();   /* split of the submit time: world draw calls vs the rest */
     BufInfo_Init(buffers);
     BufInfo_Add(buffers, vertex_buffer, sizeof(Hle3dsVertex), 4, 0x3210);
@@ -993,12 +1040,17 @@ void hle_3ds_gfx_present(void)
     }
     /* The GPU reads the vertex buffers from memory, not through the CPU's data cache: write the frame's vertices back
        before the command list runs (Azahar has no cache model, so a missing flush never showed there). */
+    hle_3ds_stage = 5;
     if (output_count > 0) GSPGPU_FlushDataCache(vertex_buffer, (u32)output_count * sizeof(*vertex_buffer));
     if (sky_vertex_count) GSPGPU_FlushDataCache(sky_vertex_buffer, (u32)sky_vertex_count * sizeof(*sky_vertex_buffer));
     if (overlay_vertex_count)
         GSPGPU_FlushDataCache(overlay_vertex_buffer, (u32)overlay_vertex_count * sizeof(*overlay_vertex_buffer));
     const uint64_t tick_submit = svcGetSystemTick();
     C3D_FrameEnd(0);
+    hle_3ds_stage = 0;
+#if HLE_3DS_PROF
+    ++wd_frames;
+#endif
     {
         static uint64_t acc_wait, acc_submit, acc_end, acc_gap, last_end; static unsigned acc_n;
         const uint64_t tick_end = svcGetSystemTick();
