@@ -83,6 +83,9 @@ case "$MODE" in
   profile)
     DEV_PAD=1
     DEFS="$DEFS -DHLE_3DS_PROF=1 -DHLE_DEV_PAD_SCRIPTED=1 -DHLE_3DS_CULL_DIAG=1 -DHLE_3DS_RENDER_DIAG=1"
+    # stall watchdog (hle_main.c): log where the guest loops after STALL_WATCH_S host seconds without main-loop
+    # progress, end the run after STALL_EXIT_S
+    DEFS="$DEFS -DHLE_STALL_WATCH_S=${STALL_WATCH_S:-20} -DHLE_STALL_EXIT_S=${STALL_EXIT_S:-120}"
     DEFS="$DEFS -DHLE_DEFAULT_MAX_SECONDS=${MAX_SECONDS:-420} -DHLE_3DS_CAPTURE_START_FRAME=${CAPTURE_START:-1360} -DHLE_3DS_CAPTURE_MAX=${CAPTURE_MAX:-4} -DHLE_3DS_CAPTURE_INTERVAL=${CAPTURE_INTERVAL:-120}"
     VERT_BUDGET="${VERT_BUDGET:-20000}" ;;
   *) echo "MODE must be release or profile" >&2; exit 1 ;;

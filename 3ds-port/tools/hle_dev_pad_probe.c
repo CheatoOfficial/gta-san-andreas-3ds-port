@@ -120,6 +120,13 @@ uint16_t hle_dev_pad(uint8_t sticks[4])
             left_y = events[i].left_y;
         }
     }
+    /* Soak after the checks (150 s to 30 min): sprint 22 s, turn 3 s, run 5 s, repeat - keeps the city streaming. */
+    if (now_ms >= 150000u && now_ms < 1800000u) {
+        const uint32_t phase = (now_ms - 150000u) % 30000u;
+        buttons = UP | (phase < 22000u ? CROSS : 0u);
+        left_x = phase >= 22000u && phase < 25000u ? ((now_ms / 30000u) & 1u ? 110 : -110) : 0;
+        left_y = -110;
+    }
 
     static uint16_t previous_buttons = 0xFFFFu;
     static int8_t previous_x = 0x7F;

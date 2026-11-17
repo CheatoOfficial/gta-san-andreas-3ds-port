@@ -254,6 +254,68 @@ static void watch_check(void)
 
 static unsigned limit_tick;
 volatile int hle_exit_requested;
+/* Stall watchdog (diagnostics, off unless HLE_STALL_WATCH_S is defined > 0, e.g. 3DS profile builds): when the
+   game's main loop makes no progress for that many host seconds, log where the running guest thread loops (the
+   last loop back-edge, ra/sp and code-range words near sp as a heuristic backtrace), every period; after
+   HLE_STALL_EXIT_S host seconds of no progress, end the run so a stall costs minutes, not the whole session.
+   Nothing about the guest is changed. */
+#ifndef HLE_STALL_WATCH_S
+#define HLE_STALL_WATCH_S 0
+#endif
+#ifndef HLE_STALL_EXIT_S
+#define HLE_STALL_EXIT_S 0
+#endif
+#if HLE_STALL_WATCH_S > 0
+static void stall_watch(double now_s)
+{
+    static uint64_t last_iters;
+    static double progress_s, logged_s;
+    static int started;
+    if (!started || hle_mainloop_iters != last_iters) {
+        started = 1;
+        last_iters = hle_mainloop_iters;
+        progress_s = logged_s = now_s;
+        return;
+    }
+    if (!hle_mainloop_iters || now_s - logged_s < (double)HLE_STALL_WATCH_S) return;
+    logged_s = now_s;
+    const R5900Ctx *c = hle_cur ? &hle_cur->c : NULL;
+    const uint32_t sp = c ? (uint32_t)c->r[29].d[0] : 0, ra = c ? (uint32_t)c->r[31].d[0] : 0;
+    LOG("STALL: main loop at iteration %llu for %.0f s (vtime %.3f s): thread %d where %08x ra %08x sp %08x; near sp:",
+        (unsigned long long)hle_mainloop_iters, now_s - progress_s, (double)hle_vtime / EE_HZ,
+        hle_cur ? hle_cur->id : -1, (unsigned)hle_where, ra, sp);
+    for (uint32_t off = 0, shown = 0; c && off < 512u && shown < 16u; off += 4u) {
+        const uint32_t a = sp + off;
+        if (a + 4u > hle_ram_end) break;
+        const uint32_t w = gw(a);
+        if (w >= 0x00100000u && w < 0x00800000u && !(w & 3u)) { LOG(" %08x@+%x", w, off); ++shown; }
+    }
+    LOG("\n");
+    /* argument registers as last passed to a call (pointers: their first three words as floats) and two stack
+       words the looping frame keeps its bounds in (0x27F580: +192 inner, +960 outer limit) */
+    for (int r = 4; c && r <= 7; ++r) {
+        const uint32_t v = (uint32_t)c->r[r].d[0];
+        LOG("STALL:   r%d %08x", r, v);
+        if (v >= 0x00100000u && v + 12u <= hle_ram_end && !(v & 3u)) {
+            float f[3];
+            for (int k = 0; k < 3; ++k) { const uint32_t w = gw(v + 4u * (uint32_t)k); memcpy(&f[k], &w, 4); }
+            LOG(" -> %g %g %g", (double)f[0], (double)f[1], (double)f[2]);
+        }
+        LOG("\n");
+    }
+    if (c && sp + 1000u <= hle_ram_end)
+        LOG("STALL:   sp+192 %d sp+960 %d sp+336 %d sp+352 %d\n", (int)gw(sp + 192u), (int)gw(sp + 960u),
+            (int)gw(sp + 336u), (int)gw(sp + 352u));
+    hle_plat_log_flush();
+#if HLE_STALL_EXIT_S > 0
+    if (now_s - progress_s >= (double)HLE_STALL_EXIT_S) {
+        hle_set_exit_reason("stall watchdog: no main-loop progress");
+        hle_exit(6);
+    }
+#endif
+}
+#endif
+
 void hle_check_limits(void)
 {
     hle_progress++;
@@ -273,10 +335,16 @@ void hle_check_limits(void)
         hle_set_exit_reason("main-loop iteration limit reached");
         hle_exit(0);
     }
-    if ((++limit_tick & 1023) == 0 && hle_host_seconds() > hle_max_seconds) {
-        LOG("host time limit reached (%d s)\n", hle_max_seconds);
-        hle_set_exit_reason("host time limit reached");
-        hle_exit(0);
+    if ((++limit_tick & 1023) == 0) {
+        const double now_s = hle_host_seconds();
+#if HLE_STALL_WATCH_S > 0
+        stall_watch(now_s);
+#endif
+        if (now_s > hle_max_seconds) {
+            LOG("host time limit reached (%d s)\n", hle_max_seconds);
+            hle_set_exit_reason("host time limit reached");
+            hle_exit(0);
+        }
     }
 }
 
