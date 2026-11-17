@@ -292,3 +292,7 @@ audio policy for slow frames. Old mode: the gothic zone-name font is garbled in 
 Pacing (Claude, 2026-11-17): 3DS release builds now default to x_bootpace=1 and x_pace=2 (real time), profile builds
 keep the deterministic defaults; NDSP queue 96 buffers. See `docs/3DS_STATUS.md`, "Real-time pacing and the audio
 queue". Performance comparisons must use profile builds (or set x_pace=0).
+
+Soak stall (Claude, 2026-11-17, branch claude/soak-stall): deterministic main-loop stall at virtual 315.76 s in the
+world-sector line walk 0x27E180 (start vector 1.62e29); bounded by `src/hle_world_guard.c`. Root cause: 0x50DAA0 can return 0 without writing its output and callers 0x40DAB0/0x40E2F4 use it anyway
+(uninitialised stack); fixed by pre-filling the output (hook in the same file). See `docs/3DS_STATUS.md`, "Soak stall".
