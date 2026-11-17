@@ -512,6 +512,17 @@ uploads that equal the previous batch's cut the draw-call loop by 1.0-2.6 ms wit
 whole frame (between presents, which excludes the present itself, + wait + submit) shrank by the same 1.3-2.6 ms of
 ~165-230 ms (~1%), judged not worth ~60 lines of state tracking, so it was reverted (diff kept privately).
 
+Rejected: `-O3` for the generated code (`Y_GEN=-O3`, text 11.6 -> 12.05 MB). Azahar, same route: whole-frame times
+equal to -O2 within 0.3 ms in every window, but the captures differ (~496k pixels over 10 frames), i.e. the
+translated code's results changed; with no measured gain and changed behaviour, -O2 stays. (Azahar does not model
+the ARM11 instruction cache, so code-size effects of optimisation levels need hardware.)
+
+Rejected: frame-time driven static detail (`x_autodetail=<fps>`: the static vertex budget followed the smoothed frame
+time, 10% down / 5% up every 15 frames, floor 12k). Azahar at target 8 fps: the budget sat at the floor, the
+distance cut and fog came in to 30-80 m, and the whole frame improved only 3-6 ms (2-4%). With static conversion now
+cheap, cutting static geometry no longer buys much; REGTA's budgets pay off because they cut game-side work (crowds,
+traffic, LOD), which here is the translated game code. Reverted (diff kept privately).
+
 Experiment, not enabled: `x_texup=0` (ps2rc.cfg; `hle_render.c`) skips the driver's GS texture-cache access 0x368B58,
 which places rasters in GS memory and builds upload packets (0x34EAF8) that this renderer never uses; the profiler
 puts it at 8-14 ms per iteration (sampled, ~35 us per call, 245-425 calls). A run with it showed correctly textured
