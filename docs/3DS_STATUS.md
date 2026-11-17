@@ -467,6 +467,10 @@ non-zero, non-coordinate word 70030c01 means the index (script arg & 0x7FFF) / 1
 whatever BSS follows the table. On a PS2 the same out-of-range read would see that console's neighbouring data,
 which plausibly differs from this port's. Still unproven: log the argument/index in 0x1FA8D0 to confirm, then
 decide between a bounds check on the index (guard to a valid entry) or keeping the line-walk clamp.
+Soak 6 (guard searching 4 KiB above sp for 0x1FA8D0's copy of the table entry) found no copy equal to a0: the bad
+endpoint is NOT the table copy, so the table-index hypothesis above is unsupported. a0 (callee sp+0x80) is more
+likely a local of the intermediate function 0x556E50 (the call at 0x1FAF20 goes there) left unset on this path.
+Next: hook/inspect 0x556E50 to see what fills its sp+0x80 before 0x27E180.
 
 Bound (not a root-cause fix): `src/hle_world_guard.c` hooks 0x27E180 and clamps an endpoint's x/y to +-3100 only
 when it is not finite or more than 100 000 units out; valid endpoints (within +-3000) are untouched and the original

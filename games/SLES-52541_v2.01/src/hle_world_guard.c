@@ -42,6 +42,16 @@ static void log_origin(R5900Ctx *c)
         if (vec + 12u <= hle_ram_end && !(vec & 3u))
             for (int k = 0; k < 3; ++k) LOG(" %08x", gw(vec + 4u * (uint32_t)k));
     }
+    /* 0x1FA8D0 keeps its copy of the table entry at its sp+528 and the script argument at sp+542: find the copy above
+       the callee frame and log the argument and the table index it gives ((arg & 0x7FFF) / 100) */
+    const uint32_t a0 = (uint32_t)c->r[4].d[0], sp = (uint32_t)c->r[29].d[0];
+    if (a0 + 12u <= hle_ram_end && !(a0 & 3u))
+        for (uint32_t at = sp; at + 16u <= hle_ram_end && at < sp + 0x1000u; at += 4u)
+            if (at != a0 && gw(at) == gw(a0) && gw(at + 4u) == gw(a0 + 4u) && gw(at + 8u) == gw(a0 + 8u)) {
+                const uint32_t arg = (gw(at + 12u) >> 16) & 0xFFFFu;
+                LOG(" | copy at sp+%x, script arg %04x, table index %u", at - sp, arg, (arg & 0x7FFFu) / 100u);
+                break;
+            }
     LOG("\n");
 }
 

@@ -298,4 +298,5 @@ world-sector line walk 0x27E180 (start vector 1.62e29); bounded by `src/hle_worl
 vector comes from. Soak 5 traced it to the mission-script handler 0x1FA8D0 (script argument -> table 0x6FEC90 entry
 (arg & 0x7FFF)/100; the entry held words 70030c01 0 3f800000). Next: log the argument/index and compare the table
 with a PS2 run. Static check: the table is filled lazily with 27 entries (0-16, 24, 26), so the bad index points
-past the table (likely out-of-range read of neighbouring BSS). See `docs/3DS_STATUS.md`, "Soak stall".
+past the table - but soak 6 found no stack copy equal to the bad endpoint, so that is unsupported; next suspect is
+an unset local (sp+0x80) in 0x556E50. See `docs/3DS_STATUS.md`, "Soak stall".
