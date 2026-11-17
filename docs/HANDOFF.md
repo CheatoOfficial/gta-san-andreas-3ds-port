@@ -296,3 +296,13 @@ queue". Performance comparisons must use profile builds (or set x_pace=0).
 Soak stall (Claude, 2026-11-17, branch claude/soak-stall): deterministic main-loop stall at virtual 315.76 s in the
 world-sector line walk 0x27E180 (start vector 1.62e29); bounded by `src/hle_world_guard.c`. Root cause: 0x50DAA0 can return 0 without writing its output and callers 0x40DAB0/0x40E2F4 use it anyway
 (uninitialised stack); fixed by pre-filling the output (hook in the same file). See `docs/3DS_STATUS.md`, "Soak stall".
+
+Lit / static geometry on the GPU (Claude, 2026-11-17, branch claude/perf-attrib, PR #13): with GPU lighting, converted
+lit ranges are cached across frames (content-hashed key), skinned ranges are blended in the shader (up to three bone
+weights per vertex, `HLE_3DS_GPU_SKIN`), and static ranges are sent as object-space vertices for the shader's
+`objmode` (cached too; 5 MiB on the full profile, no cache on compact). Azahar, same frames: lit conversion roughly
+-30..-36%, static -52%, frame -6..-10% each step; Old mode frame -14..-17%; captures pixel-identical or <= 21 pixels one
+level apart. Host tests in `adapter-equiv` emulate the shader arithmetic. `x_texup=0` (skip the driver's GS texture
+upload) is an unvalidated opt-in experiment. Next candidates: drop the double copy of cached vertices (draw from the
+cache), indexed strips instead of expanded lists, then attribute the remaining guest self time (render_scene,
+entity_render, camera_show). Nothing here has been measured on hardware.
