@@ -529,6 +529,12 @@ distance cut and fog came in to 30-80 m, and the whole frame improved only 3-6 m
 cheap, cutting static geometry no longer buys much; REGTA's budgets pay off because they cut game-side work (crowds,
 traffic, LOD), which here is the translated game code. Reverted (diff kept privately).
 
+Texture decode time (new profile line "Citro3D texture decode time", tc_convert + C3D_TexInit + swizzle per 120
+frames): Azahar, New mode, scripted route: 0-1417 ms per 120-frame window in gameplay, mean ~3.5 ms per frame, the
+busiest window ~11.8 ms per frame, in bursts (streaming). Build-time conversion (REGTA's TXD cache idea) would trade
+this for SD reads of pre-converted data; worth it mainly for stutter and memory (ETC1 is 1/8 of RGBA8) - the hardware
+log decides the priority.
+
 Experiment, not enabled: `x_texup=0` (ps2rc.cfg; `hle_render.c`) skips the driver's GS texture-cache access 0x368B58,
 which places rasters in GS memory and builds upload packets (0x34EAF8) that this renderer never uses; the profiler
 puts it at 8-14 ms per iteration (sampled, ~35 us per call, 245-425 calls). A run with it showed correctly textured
