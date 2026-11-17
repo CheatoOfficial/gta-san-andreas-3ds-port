@@ -446,6 +446,21 @@ Both are now the defaults in 3DS release builds only (profile builds keep 0 so f
 comparable); `ps2rc.cfg` overrides. Verified in a release build with no cfg: 'config: x_pace=2' and
 'boot pacing: x_bootpace=1' logged, loading at 1x.
 
+## Soak stall at virtual 315.76 s (2026-11-17)
+
+The first 70-minute soak (HUD + GPU light, scripted route: cheats, then sprinting back and forth in the train tunnel
+with two wanted stars) stopped advancing the main loop at iteration 6875 (virtual 315.76 s); Codex's triage
+(private `CODEX_SOAK_TRIAGE.md`) pointed at `world_process`. A stall watchdog was added to profile builds
+(`hle_main.c`, `HLE_STALL_WATCH_S` / `HLE_STALL_EXIT_S`): it reproduced the stall at the same iteration and virtual
+time in three runs and two emulator copies, in thread 1 at the back-edge 0x27F580 of 0x27E180 (called from 0x1FAF20).
+0x27E180 walks the 120 x 50-unit world sectors along a line (row = floor(y / 50 + 60)); the stalled loop counts rows
+without clamping. Its start vector was (1.62e29, 0, 1): the saturated row index made the loop run ~2^31 times.
+The origin of that vector is not known (possibly uninitialised stack data that differs from a PS2).
+
+Bound (not a root-cause fix): `src/hle_world_guard.c` hooks 0x27E180 and clamps an endpoint's x/y to +-3100 only
+when it is not finite or more than 100 000 units out; valid endpoints (within +-3000) are untouched and the original
+runs. Result of the soak past 315 s: see the next line of this section when recorded.
+
 ## Known issues from the pre-publication review (2026-11-15)
 
 * Fixed: vertex buffers are now written only after the previous frame's GPU work has finished; texture slots used by a
