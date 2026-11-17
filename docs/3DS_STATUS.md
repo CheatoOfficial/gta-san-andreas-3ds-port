@@ -466,6 +466,19 @@ Same route, same frames (identical vertex counts), lit conversion per frame befo
 122.4 -> 121.8, 137.6 -> 136.7, 152.8 -> 148.4 ms. Hits cover almost every non-skinned range; the remaining lit time
 is CPU skinning. A small win (0.5-5 ms per frame) in Azahar; not measured on hardware.
 
+GPU skinning (`HLE_3DS_GPU_SKIN`, build switch, default 1; acts with GPU lighting): a skinned lit range whose vertices
+have at most three non-zero bone weights (summing to 1 within byte quantisation) is sent as bind-pose position /
+normal with the (bone, weight) pairs packed into the three spare floats, and the shader (`vshader.v.pica`, skin
+procedure, `bones[24]` uniforms) blends it; other ranges keep CPU skinning. The output no longer depends on the bones,
+so skinned ranges are cached too. Near screening for these ranges is conservative (every used bone x every corner of
+the bind-pose bounds). Host test: 300 random skinned meshes, the shader's arithmetic emulated from the packed output
+matches CPU skinning, cached redraws keep the data and take the new bones, 30 four-weight meshes take the CPU path.
+Azahar, same route and frames, GPU skinning off -> on (lit cache on in both): lit conversion 28.6 -> 19.9 ms
+(53k lit verts), 66.6 -> 47.6 (90k), 43.2 -> 27.5 (51k), 33.8 -> 21.6 (45k); between presents 150.9 -> 142.2,
+214.5 -> 195.5, 180.0 -> 164.3, 167.5 -> 155.2 ms. Captures at frames 3000-4800 (CJ in the foreground): both screens
+pixel-identical. CPU-skinned remainder ~0.3k verts per frame. Not measured on hardware (Azahar runs the PICA shader
+on the host, so the GPU side of the cost is not represented).
+
 ## Soak stall at virtual 315.76 s (2026-11-17)
 
 The first 70-minute soak (HUD + GPU light, scripted route: cheats, then sprinting back and forth in the train tunnel

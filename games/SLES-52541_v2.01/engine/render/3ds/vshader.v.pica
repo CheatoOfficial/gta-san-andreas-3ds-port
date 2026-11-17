@@ -6,6 +6,10 @@
 ; (postadd + colour * postmul, clamped), as w3d_citro3d_adapter.c computes it on the CPU.
 ; Per batch, fogparams.xy = (a, b) gives the PS2 fog factor clamp(a*z + b, 0, 1) (2D passes use a = 0, b = 1: no
 ; fog). uvscale.xy is the bound texture's padding scale (1 for passes whose UVs are already scaled).
+; GPU-skinned vertices (litmode and skinmode true): v0.xyz / v1.xyz = bind-pose position / normal, and up to three
+; (bone, weight) pairs packed as bone + weight / 2 in v0.w, v1.w and v3.x; bones[3 * b + k] is row k of bone b
+; (object space), so position = sum weight * bone * (p, 1) and normal = sum weight * bone3x3 * n, exactly the
+; adapter's CPU skinning when a vertex has at most three non-zero weights (other batches take the CPU path).
 .fvec projection[4]
 .fvec fogparams
 .fvec uvscale
@@ -18,7 +22,9 @@
 .fvec options
 .fvec postmul
 .fvec postadd
+.fvec bones[24]
 .bool litmode
+.bool skinmode
 .constf k(0.99609375, 0.001953125, 0.5, 1.0)
 .constf limits(0.0, 1.0, 255.0, 0.00392156862745098)
 .out outpos position
@@ -32,6 +38,10 @@
 .alias inviewz v3
 .proc main
  mov r0, inpos
+ mov r8, inclr
+ ifu skinmode
+  call skin
+ .end
  dp4 outpos.x, projection[0], r0
  dp4 outpos.y, projection[1], r0
  dp4 outpos.z, projection[2], r0
@@ -58,12 +68,12 @@
  end
 .end
 
-; r4 = lit colour of the normal in inclr (see the header). A called procedure returns after its last instruction:
+; r4 = lit colour of the normal in r8 (see the header). A called procedure returns after its last instruction:
 ; it must not contain END, which would stop the whole shader before the caller writes its outputs.
 .proc light
- dp3 r2.x, nrow[0], inclr
- dp3 r2.y, nrow[1], inclr
- dp3 r2.z, nrow[2], inclr
+ dp3 r2.x, nrow[0], r8
+ dp3 r2.y, nrow[1], r8
+ dp3 r2.z, nrow[2], r8
  dp3 r3.x, r2, r2
  cmp limits.xx, lt, lt, r3.xx
  ifc cmp.x
@@ -115,4 +125,55 @@
  mul r4, limits.w, r4
  add r4.xyz, postadd, r4
  min r4, limits.y, r4
+.end
+
+; skinmode: r0 = skinned position (w 1), r8 = skinned normal, from the bind pose and the packed pairs (see the header).
+; r11 = 3 * bone (uniform row), r12 = weight. Uses r1, r2, r9-r13; no END (a called procedure).
+.proc skin
+ mov r9.xyz, inpos.xyz
+ mov r9.w, k.w
+ mov r10.x, inpos.w
+ mov r10.y, inclr.w
+ mov r10.z, inviewz.x
+ flr r11.xyz, r10.xyz
+ add r12.xyz, r10.xyz, -r11.xyz
+ add r12.xyz, r12.xyz, r12.xyz
+ add r13.xyz, r11.xyz, r11.xyz
+ add r11.xyz, r13.xyz, r11.xyz
+ mov r0, limits.xxxx
+ mov r8, limits.xxxx
+ mova a0.x, r11.x
+ dp4 r1.x, bones[a0.x], r9
+ dp4 r1.y, bones[a0.x+1], r9
+ dp4 r1.z, bones[a0.x+2], r9
+ dp3 r2.x, bones[a0.x], inclr
+ dp3 r2.y, bones[a0.x+1], inclr
+ dp3 r2.z, bones[a0.x+2], inclr
+ mul r1.xyz, r12.xxxx, r1.xyz
+ mul r2.xyz, r12.xxxx, r2.xyz
+ add r0.xyz, r0.xyz, r1.xyz
+ add r8.xyz, r8.xyz, r2.xyz
+ mova a0.x, r11.y
+ dp4 r1.x, bones[a0.x], r9
+ dp4 r1.y, bones[a0.x+1], r9
+ dp4 r1.z, bones[a0.x+2], r9
+ dp3 r2.x, bones[a0.x], inclr
+ dp3 r2.y, bones[a0.x+1], inclr
+ dp3 r2.z, bones[a0.x+2], inclr
+ mul r1.xyz, r12.yyyy, r1.xyz
+ mul r2.xyz, r12.yyyy, r2.xyz
+ add r0.xyz, r0.xyz, r1.xyz
+ add r8.xyz, r8.xyz, r2.xyz
+ mova a0.x, r11.z
+ dp4 r1.x, bones[a0.x], r9
+ dp4 r1.y, bones[a0.x+1], r9
+ dp4 r1.z, bones[a0.x+2], r9
+ dp3 r2.x, bones[a0.x], inclr
+ dp3 r2.y, bones[a0.x+1], inclr
+ dp3 r2.z, bones[a0.x+2], inclr
+ mul r1.xyz, r12.zzzz, r1.xyz
+ mul r2.xyz, r12.zzzz, r2.xyz
+ add r0.xyz, r0.xyz, r1.xyz
+ add r8.xyz, r8.xyz, r2.xyz
+ mov r0.w, k.w
 .end

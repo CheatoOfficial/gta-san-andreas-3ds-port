@@ -92,6 +92,7 @@ static int projection_uniform = -1, fog_uniform = -1, uv_scale_uniform = -1;
 /* GPU lighting (HLE_3DS_GPU_LIGHT): the shader's lit-batch uniforms */
 static int lit_bool = -1, viewz_uniform = -1, nrow_uniform = -1, ldir_uniform = -1, lcol_uniform = -1;
 static int material_uniform = -1, base_uniform = -1, options_uniform = -1, postmul_uniform = -1, postadd_uniform = -1;
+static int bones_uniform = -1, skin_bool = -1;
 static Hle3dsVertex *vertex_buffer;
 static Hle3dsVertex *overlay_vertex_buffer;
 static Hle3dsVertex *sky_vertex_buffer;
@@ -230,10 +231,13 @@ int hle_3ds_gfx_init(void)
         options_uniform = shaderInstanceGetUniformLocation(vs, "options");
         postmul_uniform = shaderInstanceGetUniformLocation(vs, "postmul");
         postadd_uniform = shaderInstanceGetUniformLocation(vs, "postadd");
+        bones_uniform = shaderInstanceGetUniformLocation(vs, "bones");
+        skin_bool = shaderInstanceGetUniformLocation(vs, "skinmode");
         if (lit_bool < 0 || viewz_uniform < 0 || nrow_uniform < 0 || ldir_uniform < 0 || lcol_uniform < 0 ||
             material_uniform < 0 || base_uniform < 0 || options_uniform < 0 || postmul_uniform < 0 ||
-            postadd_uniform < 0) goto fail;
+            postadd_uniform < 0 || bones_uniform < 0 || skin_bool < 0) goto fail;
         C3D_BoolUnifSet(GPU_VERTEX_SHADER, lit_bool, false);
+        C3D_BoolUnifSet(GPU_VERTEX_SHADER, skin_bool, false);
     }
     if (projection_uniform < 0 || fog_uniform < 0 || uv_scale_uniform < 0) goto fail;
     C3D_AttrInfo *attributes = C3D_GetAttrInfo();
@@ -504,6 +508,15 @@ static void set_lit_uniforms(const W3dGpuLight *g)
     C3D_FVUnifSet(GPU_VERTEX_SHADER, options_uniform, g->diffuse, g->alpha, 0.0f, 0.0f);
     C3D_FVUnifSet(GPU_VERTEX_SHADER, postmul_uniform, g->post_mul[0], g->post_mul[1], g->post_mul[2], g->post_mul[3]);
     C3D_FVUnifSet(GPU_VERTEX_SHADER, postadd_uniform, g->post_add[0], g->post_add[1], g->post_add[2], 0.0f);
+    if (g->skin) {
+        /* 8 bones x 3 rows; a whole write is one 24-vector upload */
+        C3D_FVec *rows = C3D_FVUnifWritePtr(GPU_VERTEX_SHADER, bones_uniform, 24);
+        for (int r = 0; r < 24; ++r) {
+            rows[r].x = g->bones[r][0]; rows[r].y = g->bones[r][1];
+            rows[r].z = g->bones[r][2]; rows[r].w = g->bones[r][3];
+        }
+    }
+    C3D_BoolUnifSet(GPU_VERTEX_SHADER, skin_bool, g->skin != 0);
     C3D_BoolUnifSet(GPU_VERTEX_SHADER, lit_bool, true);
     lit_uniforms_active = 1;
 }
@@ -511,6 +524,7 @@ static void clear_lit_uniforms(void)
 {
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, projection_uniform, &world_projection);
     C3D_BoolUnifSet(GPU_VERTEX_SHADER, lit_bool, false);
+    C3D_BoolUnifSet(GPU_VERTEX_SHADER, skin_bool, false);
     lit_uniforms_active = 0;
 }
 #endif

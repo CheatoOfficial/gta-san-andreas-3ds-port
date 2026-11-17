@@ -431,7 +431,30 @@ static int lit_vertex(const float world[12], const W3dLitPrepared *prepared,
    GPU-lit form (position, normal, final UV), screened through near_row (camera x world: clip z + clip w). */
 typedef struct { const W3dCam *camera; const float *world; const W3dState *state; const W3dLitPrepared *prepared;
                  int nbones; const float (*bones)[12]; const W3dLitLayout *layout; const W3dMeshView *mesh;
-                 const uint8_t *vertices; int gpu; float near_row[4]; } LitEmit;
+                 const uint8_t *vertices; int gpu; float near_row[4]; int skin; } LitEmit;
+static float skin_lo[3], skin_hi[3];          /* bind-pose bounds of the range being emitted (skin mode) */
+
+/* pack the bone weights of vertex v as up to three (bone + weight / 2) values; 0 = more than three non-zero
+   weights or a weight outside [0, 2) (the range then takes the CPU skinning path) */
+static int skin_pack(const W3dLitLayout *layout, int nbones, const uint8_t *v, float packed[3])
+{
+    int count = (int)layout->weights_count;
+    if (count > nbones) count = nbones;
+    if (count > 8) count = 8;
+    int used = 0;
+    float total = 0.0f;
+    packed[0] = packed[1] = packed[2] = 0.0f;
+    for (int b = 0; b < count; ++b) {
+        const float weight = lit_read_weight(v + layout->weights_off, layout->weights_fmt, (unsigned)b);
+        if (weight == 0.0f) continue;
+        if (!(weight > 0.0f && weight < 1.999f) || used == 3) return 0;
+        packed[used++] = (float)b + weight * 0.5f;
+        total += weight;
+    }
+    /* the conservative near bound needs weights that sum to one (within byte quantisation) */
+    return used == 0 || (total > 0.97f && total < 1.03f);
+}
+
 static int lit_emit(const LitEmit *e, uint32_t index, W3dC3dVertex *o)
 {
     if (!e->gpu) {
@@ -442,18 +465,60 @@ static int lit_emit(const LitEmit *e, uint32_t index, W3dC3dVertex *o)
         return 1;
     }
     float p[3], n[3], uv[2];
-    if (!lit_decode(e->nbones, e->bones, e->layout, e->mesh, e->vertices, index, p, n, uv)) return 0;
-    o->clip[0] = p[0]; o->clip[1] = p[1]; o->clip[2] = p[2]; o->clip[3] = 1.0f;
-    o->color[0] = n[0]; o->color[1] = n[1]; o->color[2] = n[2]; o->color[3] = 0.0f;
+    if (!lit_decode(e->skin ? 0 : e->nbones, e->bones, e->layout, e->mesh, e->vertices, index, p, n, uv)) return 0;
+    float packed[3] = {0.0f, 0.0f, 0.0f};
+    if (e->skin && !skin_pack(e->layout, e->nbones, e->vertices + (size_t)index * e->mesh->stride, packed)) return -1;
+    o->clip[0] = p[0]; o->clip[1] = p[1]; o->clip[2] = p[2]; o->clip[3] = e->skin ? packed[0] : 1.0f;
+    o->color[0] = n[0]; o->color[1] = n[1]; o->color[2] = n[2]; o->color[3] = packed[1];
     o->uv[0] = uv[0] * e->state->uscale + e->state->ubase;
     o->uv[1] = uv[1] * e->state->uscale + e->state->vbase;
-    o->view_z = 0.0f;
+    o->view_z = packed[2];
+    if (e->skin)
+        for (int k = 0; k < 3; ++k) {
+            if (p[k] < skin_lo[k]) skin_lo[k] = p[k];
+            if (p[k] > skin_hi[k]) skin_hi[k] = p[k];
+        }
 #if HLE_3DS_GPU_CLIP
     screen_sum += p[0] + p[1] + p[2] + n[0] + n[1] + n[2] + o->uv[0] + o->uv[1];
-    const float near = e->near_row[0] * p[0] + e->near_row[1] * p[1] + e->near_row[2] * p[2] + e->near_row[3];
-    if (!(near >= 0.0f)) screen_behind = 1;
+    if (!e->skin) {
+        const float near = e->near_row[0] * p[0] + e->near_row[1] * p[1] + e->near_row[2] * p[2] + e->near_row[3];
+        if (!(near >= 0.0f)) screen_behind = 1;
+    }
 #endif
     return 1;
+}
+
+/* skin mode: the conservative near screening (header of HLE_3DS_GPU_SKIN) and the bones' finiteness */
+static void skin_screen(const float near_row[4], int nbones, const float bones[8][12], const float lo[3],
+                        const float hi[3])
+{
+#if HLE_3DS_GPU_CLIP
+    for (int b = 0; b < nbones && b < 8; ++b) {
+        const float *m = bones[b];
+        for (int i = 0; i < 12; ++i) screen_sum += m[i];
+        for (int corner = 0; corner < 8; ++corner) {
+            const float c[3] = {corner & 1 ? hi[0] : lo[0], corner & 2 ? hi[1] : lo[1], corner & 4 ? hi[2] : lo[2]};
+            float q[3];
+            for (int k = 0; k < 3; ++k) q[k] = c[0] * m[k] + c[1] * m[3 + k] + c[2] * m[6 + k] + m[9 + k];
+            const float near = near_row[0] * q[0] + near_row[1] * q[1] + near_row[2] * q[2] + near_row[3];
+            if (!(near >= 0.0f)) { screen_behind = 1; return; }
+        }
+    }
+#else
+    (void)near_row; (void)nbones; (void)bones; (void)lo; (void)hi;
+#endif
+}
+
+static void skin_rows(W3dGpuLight *gpu, int nbones, const float bones[8][12])
+{
+    memset(gpu->bones, 0, sizeof gpu->bones);
+    for (int b = 0; b < nbones && b < 8; ++b)
+        for (int k = 0; k < 3; ++k) {
+            gpu->bones[3 * b + k][0] = bones[b][k];
+            gpu->bones[3 * b + k][1] = bones[b][3 + k];
+            gpu->bones[3 * b + k][2] = bones[b][6 + k];
+            gpu->bones[3 * b + k][3] = bones[b][9 + k];
+        }
 }
 
 
@@ -467,6 +532,14 @@ static int lit_emit(const LitEmit *e, uint32_t index, W3dC3dVertex *o)
 #ifndef HLE_3DS_LIT_CACHE
 #define HLE_3DS_LIT_CACHE 1
 #endif
+/* GPU skinning (HLE_3DS_GPU_SKIN, GPU-lit path): a skinned range whose vertices have at most three non-zero bone
+   weights goes to the shader as bind-pose position / normal plus packed (bone, weight) pairs, with the bone rows as
+   uniforms (vshader.v.pica, skinmode). Such output no longer depends on the bones, so it is cached like a non-skinned
+   range. The near screening becomes conservative: with non-negative weights the skinned position cannot be nearer
+   than the nearest of bone b x a corner of the bind-pose bounds over the bones the range uses. */
+#ifndef HLE_3DS_GPU_SKIN
+#define HLE_3DS_GPU_SKIN 1
+#endif
 #if HLE_3DS_LIT_CACHE
 #define LIT_CACHE_SLOTS 2048u            /* power of two */
 #define LIT_CACHE_PROBE 8u
@@ -477,6 +550,8 @@ typedef struct {
     int written;
     uint32_t stamp;
     float sum;                           /* the screen_sum contribution of the stored vertices */
+    int nbones, skin;                    /* skin: GPU-skinned (bone-independent) data */
+    float lo[3], hi[3];                  /* skin: bind-pose bounds for the conservative near screening */
 } LitCacheEntry;
 static LitCacheEntry lit_cache[LIT_CACHE_SLOTS];
 static size_t lit_cache_budget, lit_cache_bytes;
@@ -519,6 +594,7 @@ static int lc_same(const LitCacheEntry *a, const LitCacheEntry *b)
 {
     return a->vertices == b->vertices && a->first_vert == b->first_vert && a->count == b->count &&
            a->nprims == b->nprims && a->vtype == b->vtype && a->stride == b->stride && a->hash == b->hash &&
+           a->nbones == b->nbones &&
            !memcmp(a->uvbits, b->uvbits, sizeof a->uvbits);
 }
 
@@ -584,7 +660,7 @@ static int lit_range(const W3dCam *camera, const float world[12], const W3dState
     if (required > (uint64_t)output_capacity) return W3D_C3D_ERR_CAPACITY;
 
     const W3dLitPrepared prepared = lit_prepare(lit_state, lights);
-    LitEmit emit = {camera, world, state, &prepared, nbones, bones, &layout, mesh, vertices, gpu != NULL, {0}};
+    LitEmit emit = {camera, world, state, &prepared, nbones, bones, &layout, mesh, vertices, gpu != NULL, {0}, 0};
     if (gpu) {
         /* near distance = clip z + clip w of camera x world, as a row on the object-space position */
         const float *m = camera->proj;
@@ -619,8 +695,10 @@ static int lit_range(const W3dCam *camera, const float world[12], const W3dState
     }
 #if HLE_3DS_LIT_CACHE
     LitCacheEntry key, *slot = NULL;
-    if (gpu && nbones > 0) lc_skinned_verts += required;
-    if (gpu && nbones == 0 && lit_cache_budget && required) {
+    if (gpu) gpu->skin = 0;
+    const int skin_ok = HLE_3DS_GPU_SKIN && gpu && nbones > 0 && bones && layout.weights_count;
+    if (gpu && nbones > 0 && !skin_ok) lc_skinned_verts += required;
+    if (gpu && (nbones == 0 || skin_ok) && lit_cache_budget && required) {
         memset(&key, 0, sizeof key);
         key.vertices = (uintptr_t)vertices;
         key.first_vert = first_vert;
@@ -628,6 +706,7 @@ static int lit_range(const W3dCam *camera, const float world[12], const W3dState
         key.nprims = nprims;
         key.vtype = mesh->vtype;
         key.stride = mesh->stride;
+        key.nbones = nbones;
         memcpy(&key.uvbits[0], &state->uscale, 4);
         memcpy(&key.uvbits[1], &state->ubase, 4);
         memcpy(&key.uvbits[2], &state->vbase, 4);
@@ -643,7 +722,15 @@ static int lit_range(const W3dCam *camera, const float world[12], const W3dState
 #if HLE_3DS_GPU_CLIP
                 screen_sum += e->sum;
 #endif
-                lc_screen(emit.near_row, output, e->written);
+                if (e->skin) {
+                    gpu->skin = 1;
+                    skin_rows(gpu, nbones, bones);
+                    skin_screen(emit.near_row, nbones, bones, e->lo, e->hi);
+                } else if (nbones > 0) {
+                    continue;               /* a CPU-skinned entry cannot exist; never serve one */
+                } else {
+                    lc_screen(emit.near_row, output, e->written);
+                }
                 ++lc_hits;
                 lc_hit_verts += (uint64_t)e->written;
                 return e->written;
@@ -659,6 +746,16 @@ static int lit_range(const W3dCam *camera, const float world[12], const W3dState
     const float sum_before = screen_sum;
 #endif
 #endif
+#if HLE_3DS_GPU_SKIN
+    const float sum_start = screen_sum;
+    const unsigned behind_start = screen_behind;
+    if (gpu) gpu->skin = 0;
+    if (gpu && nbones > 0 && bones && layout.weights_count) {
+        emit.skin = 1;
+        for (int k = 0; k < 3; ++k) { skin_lo[k] = INFINITY; skin_hi[k] = -INFINITY; }
+    }
+skin_retry:;
+#endif
     int written = 0;
     uint32_t vertex_base = 0;
     for (uint32_t i = 0; i < nprims; ++i) {
@@ -669,12 +766,14 @@ static int lit_range(const W3dCam *camera, const float world[12], const W3dState
         const uint32_t prim = (word >> 16) & 7u;
         if (prim == 3u) {
             for (uint32_t j = 0; j < output_count; ++j)
-                if (!lit_emit(&emit, first_vert + vertex_base + j, &output[written++]))
-                    return W3D_C3D_ERR_UNSUPPORTED_FORMAT;
+                { const int r = lit_emit(&emit, first_vert + vertex_base + j, &output[written++]);
+                  if (r < 0) goto skin_fail;
+                  if (!r) return W3D_C3D_ERR_UNSUPPORTED_FORMAT; }
         } else if (input_count <= W3D_C3D_STRIP_CACHE) {
             for (uint32_t j = 0; j < input_count; ++j)
-                if (!lit_emit(&emit, first_vert + vertex_base + j, &strip_cache[j]))
-                    return W3D_C3D_ERR_UNSUPPORTED_FORMAT;
+                { const int r = lit_emit(&emit, first_vert + vertex_base + j, &strip_cache[j]);
+                  if (r < 0) goto skin_fail;
+                  if (!r) return W3D_C3D_ERR_UNSUPPORTED_FORMAT; }
             for (uint32_t j = 2; j < input_count; ++j) {
                 uint32_t a = j - 2u, b = j - 1u;
                 if ((j - 2u) & 1u) { const uint32_t temporary = a; a = b; b = temporary; }
@@ -686,16 +785,24 @@ static int lit_range(const W3dCam *camera, const float world[12], const W3dState
             for (uint32_t j = 2; j < input_count; ++j) {
                 uint32_t a = j - 2u, b = j - 1u;
                 if ((j - 2u) & 1u) { const uint32_t temporary = a; a = b; b = temporary; }
-                if (!lit_emit(&emit, first_vert + vertex_base + a, &output[written++]) ||
-                    !lit_emit(&emit, first_vert + vertex_base + b, &output[written++]) ||
-                    !lit_emit(&emit, first_vert + vertex_base + j, &output[written++]))
-                    return W3D_C3D_ERR_UNSUPPORTED_FORMAT;
+                const int ra = lit_emit(&emit, first_vert + vertex_base + a, &output[written++]);
+                const int rb = ra > 0 ? lit_emit(&emit, first_vert + vertex_base + b, &output[written++]) : ra;
+                const int rc = rb > 0 ? lit_emit(&emit, first_vert + vertex_base + j, &output[written++]) : rb;
+                if (rc < 0) goto skin_fail;
+                if (!rc) return W3D_C3D_ERR_UNSUPPORTED_FORMAT;
             }
         }
         vertex_base += input_count;
     }
+#if HLE_3DS_GPU_SKIN
+    if (emit.skin) {
+        gpu->skin = 1;
+        skin_rows(gpu, nbones, bones);
+        skin_screen(emit.near_row, nbones, bones, skin_lo, skin_hi);
+    }
+#endif
 #if HLE_3DS_LIT_CACHE
-    if (slot && written > 0) {
+    if (slot && written > 0 && (nbones == 0 || emit.skin)) {
         const size_t bytes = (size_t)written * sizeof(W3dC3dVertex);
         if (bytes <= lit_cache_budget / 8u) {
             lc_drop(slot);
@@ -706,6 +813,8 @@ static int lit_range(const W3dCam *camera, const float world[12], const W3dState
                 slot->data = data;
                 slot->written = written;
                 slot->stamp = ++lit_cache_clock;
+                slot->skin = emit.skin;
+                if (emit.skin) { memcpy(slot->lo, skin_lo, sizeof slot->lo); memcpy(slot->hi, skin_hi, sizeof slot->hi); }
 #if HLE_3DS_GPU_CLIP
                 slot->sum = screen_sum - sum_before;
 #else
@@ -720,6 +829,21 @@ static int lit_range(const W3dCam *camera, const float world[12], const W3dState
     }
 #endif
     return written;
+#if HLE_3DS_GPU_SKIN
+skin_fail:
+    /* a vertex with more than three weights: CPU skinning into object space, as before GPU skinning */
+    emit.skin = 0;
+    gpu->skin = 0;
+    screen_sum = sum_start;
+    screen_behind = behind_start;
+#if HLE_3DS_LIT_CACHE
+    lc_skinned_verts += required;
+#endif
+    goto skin_retry;
+#else
+skin_fail:                                  /* unreachable: lit_emit returns -1 only in skin mode */
+    return W3D_C3D_ERR_UNSUPPORTED_FORMAT;
+#endif
 }
 
 int w3d_citro3d_convert_lit_range(const W3dCam *camera, const float world[12], const W3dState *state,

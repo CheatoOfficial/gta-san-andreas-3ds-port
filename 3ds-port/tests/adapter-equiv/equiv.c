@@ -153,5 +153,89 @@ int main(void)
         free(vb);
     }
     printf("lit cache cases=%d mismatches=%d\n", cache_cases, cache_bad);
-    return bad != 0 || cache_bad != 0;
+
+    /* GPU skinning: the shader's skin procedure (vshader.v.pica), emulated here from the packed output and the bone
+       rows, must give sum weight * bone * (p, 1) for every vertex; a vertex with four weights must take the CPU path */
+    int skin_bad = 0, skin_cases = 0, skin_rejects = 0;
+    w3d_citro3d_lit_cache_config(1u << 20);
+    for (int iter = 0; iter < 300; iter++) {
+        W3dCam cam;
+        for (int i = 0; i < 16; i++) cam.proj[i] = rf();
+        cam.near_z = .3f; cam.far_z = 450; cam.fog_z = 100; cam.camera = 0;
+        float world[12];
+        for (int i = 0; i < 12; i++) world[i] = rf();
+        W3dState st;
+        memset(&st, 0, sizeof st);
+        st.uscale = 1;
+        W3dState lit = st;
+        lit.lights = 1;
+        W3dLights L;
+        memset(&L, 0, sizeof L);
+        float bones[8][12];
+        for (int bn = 0; bn < 8; bn++)
+            for (int i = 0; i < 12; i++) bones[bn][i] = rf();
+        const int four = iter % 10 == 9;              /* every tenth mesh: four weights on one vertex */
+        const int nb = 4 + rand() % 5;
+        int nverts = 3 * (1 + rand() % 60);
+        /* GE layout: 4 float weights (+0), float UV (+16), float normal (+24), float position (+36): 48 bytes */
+        uint8_t *vb = calloc((size_t)nverts, 48);
+        for (int v = 0; v < nverts; v++) {
+            float *f = (float *)(vb + v * 48);
+            const int b0 = rand() % 4, b1 = (b0 + 1 + rand() % 3) % 4;
+            const float w = (float)(rand() % 129) / 128.0f;
+            f[b0] = w; f[b1] = 1.0f - w;
+            if (four && v == nverts / 2) { f[0] = .25f; f[1] = .25f; f[2] = .25f; f[3] = .25f; }
+            for (int k = 4; k < 12; k++) f[k] = rf();
+        }
+        uint32_t words[3] = {0x04000000u | (3u << 16) | (uint32_t)nverts, 0x0B000000u, 0};
+        W3dMeshView mv;
+        memset(&mv, 0, sizeof mv);
+        mv.verts = vb; mv.nverts = (uint32_t)nverts; mv.nprims = 2; mv.stride = 48; mv.fmt = W3D_FMT_LIT;
+        mv.vtype = 3u | (3u << 5) | (3u << 7) | (3u << 9) | (3u << 14);
+        W3dGpuLight g;
+        const int r1 = w3d_citro3d_convert_lit_range_gpu(&cam, world, &st, &lit, &L, nb, bones, &mv, NULL, 0, words, 2, a, 8000, &g);
+        (void)w3d_citro3d_take_screen();
+        skin_cases++;
+        if (r1 != nverts) { if (skin_bad < 4) printf("skin iter %d: written %d of %d\n", iter, r1, nverts); skin_bad++; free(vb); continue; }
+        if (four) {
+            skin_rejects += !g.skin;
+            if (g.skin) { if (skin_bad < 4) printf("skin iter %d: four weights not rejected\n", iter); skin_bad++; }
+            free(vb);
+            continue;
+        }
+        if (!g.skin) { if (skin_bad < 4) printf("skin iter %d: not GPU-skinned\n", iter); skin_bad++; free(vb); continue; }
+        for (int v = 0; v < nverts && skin_bad < 1000; v++) {
+            const float *f = (const float *)(vb + v * 48);
+            float want[3] = {0, 0, 0}, got[3] = {0, 0, 0};
+            for (int b = 0; b < 4; b++)
+                for (int k = 0; k < 3; k++)
+                    want[k] += f[b] * (f[9] * bones[b][k] + f[10] * bones[b][3 + k] + f[11] * bones[b][6 + k] + bones[b][9 + k]);
+            const float packed[3] = {a[v].clip[3], a[v].color[3], a[v].view_z};
+            for (int q = 0; q < 3; q++) {
+                const float bi = floorf(packed[q]), w = (packed[q] - bi) * 2.0f;
+                const int row = 3 * (int)bi;
+                for (int k = 0; k < 3; k++)
+                    got[k] += w * (g.bones[row + k][0] * a[v].clip[0] + g.bones[row + k][1] * a[v].clip[1] +
+                                   g.bones[row + k][2] * a[v].clip[2] + g.bones[row + k][3]);
+            }
+            for (int k = 0; k < 3; k++)
+                if (fabsf(got[k] - want[k]) > 1e-4f * (1.0f + fabsf(want[k]))) {
+                    if (skin_bad < 4) printf("skin iter %d vertex %d: %f vs %f\n", iter, v, got[k], want[k]);
+                    skin_bad++;
+                    break;
+                }
+        }
+        /* second draw with other bones: a cache hit, the same vertex data, the new bone rows */
+        for (int bn = 0; bn < 8; bn++) bones[bn][9] += 1.0f;
+        const int r2 = w3d_citro3d_convert_lit_range_gpu(&cam, world, &st, &lit, &L, nb, bones, &mv, NULL, 0, words, 2, b, 8000, &g);
+        (void)w3d_citro3d_take_screen();
+        if (r2 != r1 || memcmp(a, b, (size_t)r1 * sizeof *a) || !g.skin || g.bones[0][3] != bones[0][9]) {
+            if (skin_bad < 4) printf("skin iter %d: cached redraw differs\n", iter);
+            skin_bad++;
+        }
+        free(vb);
+    }
+    w3d_citro3d_lit_cache_config(0);
+    printf("gpu skin cases=%d mismatches=%d (four-weight rejects %d)\n", skin_cases, skin_bad, skin_rejects);
+    return bad != 0 || cache_bad != 0 || skin_bad != 0;
 }

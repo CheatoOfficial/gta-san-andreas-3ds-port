@@ -42,6 +42,8 @@ typedef struct {
     float base[3], material[3], diffuse, alpha; /* lit formula; disabled lighting = base 1, no lights, alpha 1 */
     float dir[4][3], col[4][3];                /* unused lights have zero colour */
     float post_mul[4], post_add[3];            /* material step: rgb = add + c * mul, a = a * mul.a (identity: 1, 0) */
+    int skin;                                  /* GPU skinning: vertices carry the bind pose and packed weights */
+    float bones[24][4];                        /* skin: row 3 * b + k of bone b (object space) */
 } W3dGpuLight;
 /* GPU-lit conversion cache (HLE_3DS_LIT_CACHE): budget in bytes (0 = off); stats since the last call: hits, misses,
    hit vertices, miss vertices, skinned (uncacheable) vertices, evictions, allocation failures */
