@@ -42,12 +42,20 @@ typedef struct {
     float base[3], material[3], diffuse, alpha; /* lit formula; disabled lighting = base 1, no lights, alpha 1 */
     float dir[4][3], col[4][3];                /* unused lights have zero colour */
     float post_mul[4], post_add[3];            /* material step: rgb = add + c * mul, a = a * mul.a (identity: 1, 0) */
+    int mode;                                  /* 0 GPU-lit, 1 static object space (objmode: vertex colour + material) */
     int skin;                                  /* GPU skinning: vertices carry the bind pose and packed weights */
     float bones[24][4];                        /* skin: row 3 * b + k of bone b (object space) */
 } W3dGpuLight;
 /* GPU-lit conversion cache (HLE_3DS_LIT_CACHE): budget in bytes (0 = off); stats since the last call: hits, misses,
    hit vertices, miss vertices, skinned (uncacheable) vertices, evictions, allocation failures */
 void w3d_citro3d_lit_cache_config(size_t budget_bytes);
+/* static ranges as object-space vertices for the shader's objmode (HLE_3DS_GPU_LIGHT), cached with the lit ranges;
+   the static cache stats (hits, misses, hit vertices, miss vertices) since the last call */
+int w3d_citro3d_convert_mesh_range_gpu(const W3dCam *camera, const float world[12], const W3dState *state,
+                                      const W3dMeshView *mesh, const uint8_t *verts_override, uint32_t first_vert,
+                                      const uint32_t *prim_words, uint32_t nprims, W3dC3dVertex *output,
+                                      int output_capacity, W3dGpuLight *gpu);
+void w3d_citro3d_static_cache_stats(uint64_t out[4]);
 void w3d_citro3d_lit_cache_stats(uint64_t out[7], size_t *bytes);
 int w3d_citro3d_convert_lit_range_gpu(const W3dCam *camera, const float world[12], const W3dState *state,
                                      const W3dState *lit_state, const W3dLights *lights, int nbones,

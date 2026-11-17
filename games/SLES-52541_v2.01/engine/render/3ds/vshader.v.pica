@@ -6,6 +6,9 @@
 ; (postadd + colour * postmul, clamped), as w3d_citro3d_adapter.c computes it on the CPU.
 ; Per batch, fogparams.xy = (a, b) gives the PS2 fog factor clamp(a*z + b, 0, 1) (2D passes use a = 0, b = 1: no
 ; fog). uvscale.xy is the bound texture's padding scale (1 for passes whose UVs are already scaled).
+; Static object-space vertices (objmode true, litmode false): v0 = object-space position (w 1), v1 = the vertex colour
+; bytes / 255; projection and viewz as for GPU-lit, and the colour gets the material step (post) only, as
+; convert_vertex's apply_simple_light does on the CPU.
 ; GPU-skinned vertices (litmode and skinmode true): v0.xyz / v1.xyz = bind-pose position / normal, and up to three
 ; (bone, weight) pairs packed as bone + weight / 2 in v0.w, v1.w and v3.x; bones[3 * b + k] is row k of bone b
 ; (object space), so position = sum weight * bone * (p, 1) and normal = sum weight * bone3x3 * n, exactly the
@@ -25,6 +28,7 @@
 .fvec bones[24]
 .bool litmode
 .bool skinmode
+.bool objmode
 .constf k(0.99609375, 0.001953125, 0.5, 1.0)
 .constf limits(0.0, 1.0, 255.0, 0.00392156862745098)
 .out outpos position
@@ -51,10 +55,18 @@
  ifu litmode
   dp4 r1.x, viewz, r0
   call light
+  call post
   mov outclr, r4
  .else
-  mov r1.x, inviewz.x
-  mov outclr, inclr
+  ifu objmode
+   dp4 r1.x, viewz, r0
+   mov r4, inclr
+   call post
+   mov outclr, r4
+  .else
+   mov r1.x, inviewz.x
+   mov outclr, inclr
+  .end
  .end
  mul r1.x, fogparams.x, r1.x
  add r1.x, fogparams.y, r1.x
@@ -117,6 +129,11 @@
  min r4.xyz, limits.z, r4
  mul r4.xyz, limits.w, r4
  mov r4.w, options.y
+.end
+
+; r4 = the material step of r4 (convert_vertex's apply_simple_light): postadd + c * postmul with the product rounded
+; to a byte like mul255, alpha c.a * postmul.a; no END (a called procedure).
+.proc post
  mul r4, postmul, r4
  ; apply_simple_light rounds c * m / 255 to the nearest byte (mul255); do the same before adding the emissive term
  mul r4, limits.z, r4

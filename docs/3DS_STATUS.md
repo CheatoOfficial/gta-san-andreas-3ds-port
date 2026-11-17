@@ -479,6 +479,19 @@ Azahar, same route and frames, GPU skinning off -> on (lit cache on in both): li
 pixel-identical. CPU-skinned remainder ~0.3k verts per frame. Not measured on hardware (Azahar runs the PICA shader
 on the host, so the GPU side of the cost is not represented).
 
+GPU static path (`w3d_citro3d_convert_mesh_range_gpu`, with GPU lighting): static (prelit) ranges are sent as
+object-space vertices (position, colour bytes / 255, scaled UV) with camera x world as the batch matrix and
+convert_vertex's material step (lamb / lemis, byte-rounded like mul255) in the shader (`objmode`, `post` procedure).
+The data is cached with the lit ranges (cache budget raised to 5 MiB on the full profile); the same per-vertex near
+screening and CPU fallback as GPU-lit. Host test: 300 random static meshes, the shader's arithmetic emulated from the
+output matches the CPU conversion (clip, colour within one level, UV, view z), cached redraws identical.
+Azahar, same frames, before -> after: static conversion 16.6 -> 7.9, 16.8 -> 7.9, 16.6 -> 7.9, 17.9 -> 8.1,
+18.1 -> 8.0 ms per frame (19.5k-19.9k static verts, ~95% served from the cache, 0 CPU fallbacks); between presents
+142.2 -> 133.6, 195.5 -> 186.9, 164.3 -> 155.8, 155.2 -> 145.9, 136.4 -> 126.5 ms. Captures: bottom screen identical,
+top screen at most 20 pixels differ by one level (GPU rounding). The remaining static time is mostly copying cached
+vertices (twice: into the frame buffer, then the present pass); drawing straight from the cached buffers is the next
+step. Not measured on hardware.
+
 ## Soak stall at virtual 315.76 s (2026-11-17)
 
 The first 70-minute soak (HUD + GPU light, scripted route: cheats, then sprinting back and forth in the train tunnel

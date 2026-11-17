@@ -237,5 +237,77 @@ int main(void)
     }
     w3d_citro3d_lit_cache_config(0);
     printf("gpu skin cases=%d mismatches=%d (four-weight rejects %d)\n", skin_cases, skin_bad, skin_rejects);
-    return bad != 0 || cache_bad != 0 || skin_bad != 0;
+
+    /* GPU static path: the shader's objmode (camera x world on the object-space position, the material step on the
+       vertex colour, emulated here) must give the CPU static conversion's clip position, colour and UV; a second
+       draw is a cache hit with the same data */
+    int static_bad = 0, static_cases = 0;
+    w3d_citro3d_lit_cache_config(1u << 20);
+    for (int iter = 0; iter < 300; iter++) {
+        W3dCam cam;
+        for (int i = 0; i < 16; i++) cam.proj[i] = rf();
+        cam.near_z = .3f; cam.far_z = 450; cam.fog_z = 100; cam.camera = 0;
+        float world[12];
+        for (int i = 0; i < 12; i++) world[i] = rf();
+        W3dState st;
+        memset(&st, 0, sizeof st);
+        st.uscale = 1; st.ubase = .25f; st.vbase = .5f; st.light = iter & 1; st.lamb = rand(); st.lemis = rand();
+        const int strip = rand() & 1;
+        int nverts = 3 + rand() % 300;
+        if (!strip) nverts = (nverts / 3) * 3;
+        if (nverts < 3) continue;
+        uint8_t *vb = calloc((size_t)nverts, 64);
+        for (int v = 0; v < nverts; v++) {
+            float *f = (float *)(vb + v * 64);
+            for (int k = 0; k < 14; k++) f[k] = rf();
+            ((uint32_t *)f)[2] = (uint32_t)rand() ^ ((uint32_t)rand() << 16);   /* vertex colour bytes */
+        }
+        uint32_t words[3] = {0x04000000u | ((strip ? 4u : 3u) << 16) | (uint32_t)nverts, 0x0B000000u, 0};
+        W3dMeshView mv;
+        memset(&mv, 0, sizeof mv);
+        mv.verts = vb; mv.nverts = (uint32_t)nverts; mv.nprims = 2; mv.stride = 64; mv.fmt = W3D_FMT_UVF;
+        W3dGpuLight g;
+        const int rc = w3d_citro3d_convert_mesh_range(&cam, world, &st, &mv, NULL, 0, words, 2, r, 8000);
+        (void)w3d_citro3d_take_screen();
+        const int rg = w3d_citro3d_convert_mesh_range_gpu(&cam, world, &st, &mv, NULL, 0, words, 2, a, 8000, &g);
+        (void)w3d_citro3d_take_screen();
+        const int rh = w3d_citro3d_convert_mesh_range_gpu(&cam, world, &st, &mv, NULL, 0, words, 2, b, 8000, &g);
+        (void)w3d_citro3d_take_screen();
+        static_cases++;
+        if (rc <= 0 || rg != rc || rh != rc || memcmp(a, b, (size_t)rc * sizeof *a) || g.mode != 1) {
+            if (static_bad < 4) printf("static iter %d: written %d/%d/%d mode %d\n", iter, rc, rg, rh, g.mode);
+            static_bad++;
+            free(vb);
+            continue;
+        }
+        for (int v = 0; v < rc; v++) {
+            /* clip = proj x (world x p): the backend folds them into one matrix; emulate in the CPU's order */
+            const float *p = a[v].clip, *w = g.world, *m = g.proj;
+            const float x = p[0] * w[0] + p[1] * w[3] + p[2] * w[6] + w[9];
+            const float y = p[0] * w[1] + p[1] * w[4] + p[2] * w[7] + w[10];
+            const float z = p[0] * w[2] + p[1] * w[5] + p[2] * w[8] + w[11];
+            float clip[4];
+            for (int i = 0; i < 4; i++) clip[i] = x * m[i] + y * m[4 + i] + z * m[8 + i] + m[12 + i];
+            int ok = 1;
+            for (int i = 0; i < 4; i++) ok &= fabsf(clip[i] - r[v].clip[i]) <= 1e-4f * (1.0f + fabsf(r[v].clip[i]));
+            for (int c = 0; c < 4; c++) {
+                float q = a[v].color[c] * g.post_mul[c];
+                q = floorf(q * 255.0f + 0.5f) / 255.0f;
+                if (c < 3) q += g.post_add[c];
+                if (q > 1.0f) q = 1.0f;
+                ok &= fabsf(q - r[v].color[c]) <= 0.0045f;
+            }
+            ok &= fabsf(a[v].uv[0] - r[v].uv[0]) <= 1e-6f && fabsf(a[v].uv[1] - r[v].uv[1]) <= 1e-6f;
+            ok &= fabsf(z - r[v].view_z) <= 1e-4f * (1.0f + fabsf(z));
+            if (!ok) {
+                if (static_bad < 4) printf("static iter %d vertex %d differs\n", iter, v);
+                static_bad++;
+                break;
+            }
+        }
+        free(vb);
+    }
+    w3d_citro3d_lit_cache_config(0);
+    printf("gpu static cases=%d mismatches=%d\n", static_cases, static_bad);
+    return bad != 0 || cache_bad != 0 || skin_bad != 0 || static_bad != 0;
 }
