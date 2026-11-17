@@ -460,9 +460,13 @@ Origin (soak 5, guard logging the caller): the walk is reached from the mission-
 12-byte vector table at 0x6FEC90 with (arg & 0x7FFF) / 100 and copies the entry to the stack; the first endpoint
 (sp + 0x80 in the callee) arrived as raw words 70030c01 00000000 3f800000, i.e. x is not a coordinate at all
 (1.62e29 as a float), y 0, z 1.0, while the other endpoint was a normal world position (2275.1, -1055.1, 48.7).
-Leading hypothesis, not yet proven: the script argument indexes past the populated part of the table (or the
-table entry was never filled on this port), so a non-coordinate is used. Next step: log the argument and index in
-0x1FA8D0 and compare the table contents against a PS2 run at the same script point.
+Static check of the translated handler: 0x6FEC90 is BSS (zero in the ELF); 0x1FA8D0 fills it once (flag byte at
++1260 of its context) by copying constant vectors from 0x5F9A38.. into entries 0-16, 24 and 26 (27 stores); no
+other code writes the table. Entries 17-23 and 25 stay zero, so a zero vector would have come from a gap; the
+non-zero, non-coordinate word 70030c01 means the index (script arg & 0x7FFF) / 100 pointed past entry 26, into
+whatever BSS follows the table. On a PS2 the same out-of-range read would see that console's neighbouring data,
+which plausibly differs from this port's. Still unproven: log the argument/index in 0x1FA8D0 to confirm, then
+decide between a bounds check on the index (guard to a valid entry) or keeping the line-walk clamp.
 
 Bound (not a root-cause fix): `src/hle_world_guard.c` hooks 0x27E180 and clamps an endpoint's x/y to +-3100 only
 when it is not finite or more than 100 000 units out; valid endpoints (within +-3000) are untouched and the original
