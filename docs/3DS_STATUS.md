@@ -446,6 +446,23 @@ Both are now the defaults in 3DS release builds only (profile builds keep 0 so f
 comparable); `ps2rc.cfg` overrides. Verified in a release build with no cfg: 'config: x_pace=2' and
 'boot pacing: x_bootpace=1' logged, loading at 1x.
 
+## First real-hardware runs (New 3DS LL, 2026-11-17)
+
+The owner ran a private profile-build CIA (Old 3DS 64 MB / New 3DS 124 MB, 804 MHz, L2) on a New 3DS LL:
+
+1. Crash at start-up, twice (Luma ARM11 dumps): data abort reading address 0xC in citro3d 1.7.1's `C3D_TexBind`,
+   called from the 2D/overlay pass with `C3D_TexBind(1, NULL)`. For units > 0 citro3d reads the texture's type
+   through the pointer without a NULL check; Azahar returns 0 for that read, so no emulator run ever showed it. The
+   call dated from the first 3DS port layer, i.e. every 3DS build so far would crash on hardware. Fixed (1369ce0):
+   untextured batches bind a permanent 8x8 white texture on unit 1 (2D/overlay, sky, world).
+2. With that fix: no crash; the game reaches the loading-thread milestone (virtual 2.035 s, frame 101 - the first
+   frame with any geometry: two textured 2D quads of the first loading screen) and freezes with HOME unresponsive;
+   no session.log reached the card (created but never committed before the forced power-off).
+   Follow-ups (not yet tried on hardware): the per-frame vertex buffers are now flushed from the data cache before
+   the GPU runs (15dcac2 - Azahar has no cache model, so stale vertices never showed there); the session log is
+   committed at creation and synced to the card at most once a second; a hang watchdog thread reports the present
+   stage, frame and virtual time in the log and on the console after 10 s without progress (bbab3a0).
+
 ## Where gameplay frame time goes, and the GPU-lit conversion cache (2026-11-17)
 
 Profile attribution (private Azahar, New mode, scripted route, profile builds; temporary zones under 0x2EF270, since
