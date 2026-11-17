@@ -535,6 +535,14 @@ busiest window ~11.8 ms per frame, in bursts (streaming). Build-time conversion 
 this for SD reads of pre-converted data; worth it mainly for stutter and memory (ETC1 is 1/8 of RGBA8) - the hardware
 log decides the priority.
 
+Hardware-register traps (`hle.memtrap`, ~1-2.5k per iteration): profile builds now log an address histogram ("MMIO slow
+path ... top registers"). Nearly all are the scratchpad-to-RAM DMA channel (fromSPR, channel 8): CHCR 0x1000D000 (~35%,
+start + busy polls), SADR 0x1000D080, QWC 0x1000D020, MADR 0x1000D010 (~14% each) and 0x1000E100, i.e. ~6-7 register
+accesses per scratchpad copy, issued from many call sites (render driver 0x34xxxx, the per-mesh callback 0x4CEFF0,
+entity code). The profiler's ~5 us per access is mostly its own sampling cost; each access also takes a safe point
+(interrupt / thread-switch delivery), so a fast path would risk timing behaviour for an estimated ~1-2 ms per frame.
+Not pursued until the hardware profile shows it matters.
+
 Experiment, not enabled: `x_texup=0` (ps2rc.cfg; `hle_render.c`) skips the driver's GS texture-cache access 0x368B58,
 which places rasters in GS memory and builds upload packets (0x34EAF8) that this renderer never uses; the profiler
 puts it at 8-14 ms per iteration (sampled, ~35 us per call, 245-425 calls). A run with it showed correctly textured
