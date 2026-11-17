@@ -306,3 +306,13 @@ level apart. Host tests in `adapter-equiv` emulate the shader arithmetic. `x_tex
 upload) is an unvalidated opt-in experiment. Next candidates: drop the double copy of cached vertices (draw from the
 cache), indexed strips instead of expanded lists, then attribute the remaining guest self time (render_scene,
 entity_render, camera_show). Nothing here has been measured on hardware.
+
+Hardware profile CIA (Claude, 2026-11-17): a private test CIA of the profile build (scripted route, 15-minute cap,
+no captures; New 3DS 124 MB / 804 MHz / L2, Old 3DS 64 MB) is built outside the repo from this branch with makerom
+and an rsf adapted from the owner's own MKW-3DS one (not committed; no packaging is added to the repo). It reads the
+existing `sdmc:/3ds/ps2rc-sa/` data. An identical-build Azahar reference log is kept privately for a line-by-line
+comparison once the owner returns `session.log` from a New 3DS LL. Later on 2026-11-17 the branch also gained: cache
+hits drawn by reference (one copy per frame) and `C3D_FrameBegin(0)` (no 60 Hz begin wait); rejected with
+measurements: per-batch state dedupe, `-O3` for the generated code, frame-time static-detail controller (see
+`docs/3DS_STATUS.md`). Next after the hardware log: build-time texture conversion (ETC1 needs an offline encoder and
+runtime raster matching), then the guest hot spots the hardware profile ranks highest.
