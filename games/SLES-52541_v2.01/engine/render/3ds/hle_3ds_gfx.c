@@ -991,6 +991,12 @@ void hle_3ds_gfx_present(void)
             present_count, cmd_usage_milli, source_count, batch_count, overlay_vertex_count, overlay_batch_count);
         hle_plat_log_flush();
     }
+    /* The GPU reads the vertex buffers from memory, not through the CPU's data cache: write the frame's vertices back
+       before the command list runs (Azahar has no cache model, so a missing flush never showed there). */
+    if (output_count > 0) GSPGPU_FlushDataCache(vertex_buffer, (u32)output_count * sizeof(*vertex_buffer));
+    if (sky_vertex_count) GSPGPU_FlushDataCache(sky_vertex_buffer, (u32)sky_vertex_count * sizeof(*sky_vertex_buffer));
+    if (overlay_vertex_count)
+        GSPGPU_FlushDataCache(overlay_vertex_buffer, (u32)overlay_vertex_count * sizeof(*overlay_vertex_buffer));
     const uint64_t tick_submit = svcGetSystemTick();
     C3D_FrameEnd(0);
     {
