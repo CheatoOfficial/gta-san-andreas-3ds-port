@@ -492,6 +492,11 @@ top screen at most 20 pixels differ by one level (GPU rounding). The remaining s
 vertices (twice: into the frame buffer, then the present pass); drawing straight from the cached buffers is the next
 step. Not measured on hardware.
 
+Old 3DS (compact profile, no vertex cache), same route and frames, GPU lighting off (CPU lit/static reference) ->
+on (GPU lighting, skinning and static paths): lit conversion 69.5 -> 40.8, 93.7 -> 60.8, 74.7 -> 48.4 ms; static
+8.4 -> 5.5 ms; between presents 181.5 -> 149.9, 230.5 -> 194.7, 201.1 -> 172.0, 179.3 -> 153.9 ms. Captures: bottom
+screen identical, top at most 21 pixels one level apart. Minimum linear free unchanged (124 -> 123 KiB). Azahar only.
+
 Experiment, not enabled: `x_texup=0` (ps2rc.cfg; `hle_render.c`) skips the driver's GS texture-cache access 0x368B58,
 which places rasters in GS memory and builds upload packets (0x34EAF8) that this renderer never uses; the profiler
 puts it at 8-14 ms per iteration (sampled, ~35 us per call, 245-425 calls). A run with it showed correctly textured
