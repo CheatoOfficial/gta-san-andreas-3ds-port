@@ -497,6 +497,12 @@ on (GPU lighting, skinning and static paths): lit conversion 69.5 -> 40.8, 93.7 
 8.4 -> 5.5 ms; between presents 181.5 -> 149.9, 230.5 -> 194.7, 201.1 -> 172.0, 179.3 -> 153.9 ms. Captures: bottom
 screen identical, top at most 21 pixels one level apart. Minimum linear free unchanged (124 -> 123 KiB). Azahar only.
 
+Submit-time split (profile timing line, "world draw calls"): of 14-36 ms submit per busy frame, the world draw-call
+loop is 5-18 ms, the rest the copy / clip pass and the sky. Rejected experiment: skipping per-batch state and uniform
+uploads that equal the previous batch's cut the draw-call loop by 1.0-2.6 ms with pixel-identical captures, but
+between presents did not change at all (to 0.1 ms) in any window - the present's CPU time is not on the frame's
+critical path in Azahar - so the ~60 lines were reverted (diff kept privately).
+
 Experiment, not enabled: `x_texup=0` (ps2rc.cfg; `hle_render.c`) skips the driver's GS texture-cache access 0x368B58,
 which places rasters in GS memory and builds upload packets (0x34EAF8) that this renderer never uses; the profiler
 puts it at 8-14 ms per iteration (sampled, ~35 us per call, 245-425 calls). A run with it showed correctly textured

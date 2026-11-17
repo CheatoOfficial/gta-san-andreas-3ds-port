@@ -93,6 +93,7 @@ static int projection_uniform = -1, fog_uniform = -1, uv_scale_uniform = -1;
 static int lit_bool = -1, viewz_uniform = -1, nrow_uniform = -1, ldir_uniform = -1, lcol_uniform = -1;
 static int material_uniform = -1, base_uniform = -1, options_uniform = -1, postmul_uniform = -1, postadd_uniform = -1;
 static int bones_uniform = -1, skin_bool = -1, obj_bool = -1;
+static uint64_t submit_draw_ticks;           /* world draw-call loop, summed for the 120-frame timing line */
 static Hle3dsVertex *vertex_buffer;
 static Hle3dsVertex *overlay_vertex_buffer;
 static Hle3dsVertex *sky_vertex_buffer;
@@ -839,6 +840,7 @@ void hle_3ds_gfx_present(void)
             C3D_DrawArrays(GPU_TRIANGLES, (int)batch->first, (int)batch->count);
         }
     }
+    const uint64_t tick_draw0 = svcGetSystemTick();   /* split of the submit time: world draw calls vs the rest */
     BufInfo_Init(buffers);
     BufInfo_Add(buffers, vertex_buffer, sizeof(Hle3dsVertex), 4, 0x3210);
     /* Init/Add mutate the descriptor; Set marks the new binding dirty after
@@ -928,6 +930,7 @@ void hle_3ds_gfx_present(void)
 #if HLE_3DS_GPU_LIGHT
     if (lit_uniforms_active) clear_lit_uniforms();
 #endif
+    submit_draw_ticks += svcGetSystemTick() - tick_draw0;
 
     fog_environment(0, 0);
     set_batch_uniforms(0.0f, 1.0f, 1.0f, 1.0f);
@@ -982,8 +985,10 @@ void hle_3ds_gfx_present(void)
         last_end = tick_end;
         if (++acc_n == 120u) {
             const double ms = 1000.0 / (double)SYSCLOCK_ARM11 / 120.0;
-            LOG("Citro3D timing (120 frames, ms/frame): between-presents %.1f FrameBegin-wait %.1f submit %.1f FrameEnd %.1f\n",
-                (double)acc_gap * ms, (double)acc_wait * ms, (double)acc_submit * ms, (double)acc_end * ms);
+            LOG("Citro3D timing (120 frames, ms/frame): between-presents %.1f FrameBegin-wait %.1f submit %.1f (world draw "
+                "calls %.1f) FrameEnd %.1f\n", (double)acc_gap * ms, (double)acc_wait * ms, (double)acc_submit * ms,
+                (double)submit_draw_ticks * ms, (double)acc_end * ms);
+            submit_draw_ticks = 0;
             uint64_t ct[2], cv[2], cc[2];
             w3d_citro3d_take_conv_stats(ct, cv, cc);
             LOG("Citro3D convert (120 frames, per frame): static %.1f ms %llu verts %llu calls | lit %.1f ms %llu verts %llu calls\n",
