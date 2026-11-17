@@ -501,6 +501,12 @@ survives cache pressure within its frame. Azahar, same frames, before -> after: 
 (before this change) ran to virtual 735 s (17 366 iterations): no stall / fatal / clamp, cache steady at ~4 MiB,
 minimum linear free 5.9 MiB.
 
+Frame begin without the 60 Hz pacing: `C3D_FrameBegin(0)` instead of `C3D_FRAME_SYNCDRAW`. Without
+`C3D_FRAME_NONBLOCK` citro3d still waits for the previous frame's GPU work (the vertex-buffer guarantee); SYNCDRAW only
+added C3D_FrameSync, a wait for the 60 Hz frame cadence that cost ~half a vblank per frame while frames take far
+longer than 16.7 ms. Azahar, same frames: FrameBegin-wait 7.8-10.8 -> 0.0 ms in every window, everything else
+unchanged (whole frame -5..-11%), captures pixel-identical. On hardware the GPU wait itself (real GPU work) can remain.
+
 Old 3DS (compact profile, no vertex cache), same route and frames, GPU lighting off (CPU lit/static reference) ->
 on (GPU lighting, skinning and static paths): lit conversion 69.5 -> 40.8, 93.7 -> 60.8, 74.7 -> 48.4 ms; static
 8.4 -> 5.5 ms; between presents 181.5 -> 149.9, 230.5 -> 194.7, 201.1 -> 172.0, 179.3 -> 153.9 ms. Captures: bottom

@@ -627,9 +627,12 @@ static void draw_overlay_batches(C3D_TexEnv *environment, unsigned screen)
 void hle_3ds_gfx_present(void)
 {
     if (!gfx_ready) return;
-    /* Wait for the previous frame's GPU work BEFORE the CPU rewrites the shared vertex buffers below. */
+    /* Wait for the previous frame's GPU work BEFORE the CPU rewrites the shared vertex buffers below. Without
+       C3D_FRAME_NONBLOCK, C3D_FrameBegin always waits for the GPU; C3D_FRAME_SYNCDRAW would add C3D_FrameSync, the
+       60 Hz frame-rate wait, which only costs time (~half a vblank per frame) while frames take far longer than
+       16.7 ms. */
     const uint64_t tick_pre = svcGetSystemTick();
-    C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+    C3D_FrameBegin(0);
     const uint64_t tick_begin = svcGetSystemTick();
     hle_3ds_texture_gpu_synced();
     const W3dC3dVertex *source = w3d_citro3d_frame_vertices();
