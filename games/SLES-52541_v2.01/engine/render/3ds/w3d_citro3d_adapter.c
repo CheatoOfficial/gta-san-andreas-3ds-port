@@ -548,6 +548,9 @@ static void skin_rows(W3dGpuLight *gpu, int nbones, const float bones[8][12])
 #define HLE_3DS_GPU_SKIN 1
 #endif
 #if !HLE_3DS_LIT_CACHE
+int w3d_citro3d_cache_by_ref;
+const W3dC3dVertex *w3d_citro3d_cache_hit;
+void w3d_citro3d_cache_new_frame(void) {}
 void w3d_citro3d_lit_cache_config(size_t budget_bytes) { (void)budget_bytes; }
 void w3d_citro3d_lit_cache_stats(uint64_t out[7], size_t *bytes) { memset(out, 0, 7 * sizeof *out); if (bytes) *bytes = 0; }
 void w3d_citro3d_static_cache_stats(uint64_t out[4]) { memset(out, 0, 4 * sizeof *out); }
@@ -561,12 +564,19 @@ typedef struct {
     W3dC3dVertex *data;                  /* NULL = empty slot */
     int written;
     uint32_t stamp;
+    uint32_t pin;                        /* lc_frame when last served by reference: kept until that frame is presented */
     float sum;                           /* the screen_sum contribution of the stored vertices */
     int nbones, skin;                    /* skin: GPU-skinned (bone-independent) data */
     float lo[3], hi[3];                  /* skin: bind-pose bounds for the conservative near screening */
 } LitCacheEntry;
 static LitCacheEntry lit_cache[LIT_CACHE_SLOTS];
 static size_t lit_cache_budget, lit_cache_bytes;
+/* serving by reference (the backend): a hit hands back the stored vertices (w3d_citro3d_cache_hit) instead of copying
+   them to the output; the entry is pinned for the current frame (w3d_citro3d_cache_new_frame after the present) */
+static uint32_t lc_frame = 1;
+int w3d_citro3d_cache_by_ref;
+const W3dC3dVertex *w3d_citro3d_cache_hit;
+void w3d_citro3d_cache_new_frame(void) { ++lc_frame; }
 static uint32_t lit_cache_clock;
 static uint64_t lc_hits, lc_misses, lc_hit_verts, lc_miss_verts, lc_skinned_verts, lc_evicted, lc_nomem;
 static uint64_t lc_static_hits, lc_static_misses, lc_static_hit_verts, lc_static_miss_verts;
@@ -631,7 +641,8 @@ static void lc_shrink(void)
     while (lit_cache_bytes > lit_cache_budget / 4u * 3u) {
         LitCacheEntry *oldest = NULL;
         for (uint32_t i = 0; i < LIT_CACHE_SLOTS; ++i)
-            if (lit_cache[i].data && (!oldest || (int32_t)(lit_cache[i].stamp - oldest->stamp) < 0)) oldest = &lit_cache[i];
+            if (lit_cache[i].data && lit_cache[i].pin != lc_frame &&
+                (!oldest || (int32_t)(lit_cache[i].stamp - oldest->stamp) < 0)) oldest = &lit_cache[i];
         if (!oldest) break;
         lc_drop(oldest);
     }
@@ -736,8 +747,10 @@ static int lit_range(const W3dCam *camera, const float world[12], const W3dState
         for (uint32_t k = 0; k < LIT_CACHE_PROBE; ++k) {
             LitCacheEntry *e = &lit_cache[(home + k) & (LIT_CACHE_SLOTS - 1u)];
             if (e->data && lc_same(e, &key)) {
+                if (e->skin ? 0 : nbones > 0) continue;     /* a CPU-skinned entry cannot exist; never serve one */
                 e->stamp = ++lit_cache_clock;
-                memcpy(output, e->data, (size_t)e->written * sizeof *output);
+                if (w3d_citro3d_cache_by_ref) { e->pin = lc_frame; w3d_citro3d_cache_hit = e->data; }
+                else memcpy(output, e->data, (size_t)e->written * sizeof *output);
 #if HLE_3DS_GPU_CLIP
                 screen_sum += e->sum;
 #endif
@@ -745,17 +758,15 @@ static int lit_range(const W3dCam *camera, const float world[12], const W3dState
                     gpu->skin = 1;
                     skin_rows(gpu, nbones, bones);
                     skin_screen(emit.near_row, nbones, bones, e->lo, e->hi);
-                } else if (nbones > 0) {
-                    continue;               /* a CPU-skinned entry cannot exist; never serve one */
                 } else {
-                    lc_screen(emit.near_row, output, e->written);
+                    lc_screen(emit.near_row, e->data, e->written);
                 }
                 ++lc_hits;
                 lc_hit_verts += (uint64_t)e->written;
                 return e->written;
             }
             if (!e->data && !empty) empty = e;
-            if (e->data && (!oldest || (int32_t)(e->stamp - oldest->stamp) < 0)) oldest = e;
+            if (e->data && e->pin != lc_frame && (!oldest || (int32_t)(e->stamp - oldest->stamp) < 0)) oldest = e;
         }
         slot = empty ? empty : oldest;   /* filled after the conversion below */
         ++lc_misses;
@@ -877,8 +888,8 @@ static int static_emit(const W3dMeshView *mesh, const uint8_t *verts, uint32_t i
     W3dVC v;
     if (!mesh_vertex(mesh, verts, index, &v)) return 0;
     o->clip[0] = v.x; o->clip[1] = v.y; o->clip[2] = v.z; o->clip[3] = 1.0f;
-    for (int channel = 0; channel < 4; ++channel)
-        o->color[channel] = (float)color_component(v.c, channel) * (1.0f / 255.0f);
+    for (int channel = 0; channel < 4; ++channel)        /* apply_simple_light's debug mode: opaque white */
+        o->color[channel] = HLE_3DS_LIGHTING_DEBUG ? 1.0f : (float)color_component(v.c, channel) * (1.0f / 255.0f);
     o->uv[0] = v.u * state->uscale + state->ubase;
     o->uv[1] = v.v * state->uscale + state->vbase;
     o->view_z = 0.0f;
@@ -917,6 +928,7 @@ int w3d_citro3d_convert_mesh_range_gpu(const W3dCam *camera, const float world[1
     }
     if (need > (uint64_t)output_capacity) return W3D_C3D_ERR_CAPACITY;
     const uint8_t *verts = verts_override ? verts_override : mesh->verts;
+    w3d_citro3d_cache_hit = NULL;
 
     /* the batch's uniforms: camera x world, the material step of apply_simple_light */
     memset(gpu, 0, sizeof *gpu);
@@ -961,17 +973,18 @@ int w3d_citro3d_convert_mesh_range_gpu(const W3dCam *camera, const float world[1
             LitCacheEntry *e = &lit_cache[(home + k) & (LIT_CACHE_SLOTS - 1u)];
             if (e->data && lc_same(e, &key)) {
                 e->stamp = ++lit_cache_clock;
-                memcpy(output, e->data, (size_t)e->written * sizeof *output);
+                if (w3d_citro3d_cache_by_ref) { e->pin = lc_frame; w3d_citro3d_cache_hit = e->data; }
+                else memcpy(output, e->data, (size_t)e->written * sizeof *output);
 #if HLE_3DS_GPU_CLIP
                 screen_sum += e->sum;
 #endif
-                lc_screen(near_row, output, e->written);
+                lc_screen(near_row, e->data, e->written);
                 ++lc_static_hits;
                 lc_static_hit_verts += (uint64_t)e->written;
                 return e->written;
             }
             if (!e->data && !empty) empty = e;
-            if (e->data && (!oldest || (int32_t)(e->stamp - oldest->stamp) < 0)) oldest = e;
+            if (e->data && e->pin != lc_frame && (!oldest || (int32_t)(e->stamp - oldest->stamp) < 0)) oldest = e;
         }
         slot = empty ? empty : oldest;
         ++lc_static_misses;
@@ -1060,6 +1073,7 @@ int w3d_citro3d_convert_lit_range_gpu(const W3dCam *camera, const float world[12
                                      W3dC3dVertex *output, int output_capacity, W3dGpuLight *gpu)
 {
     if (!gpu) return W3D_C3D_ERR_ARGUMENT;
+    w3d_citro3d_cache_hit = NULL;
     return lit_range(camera, world, state, lit_state, lights, nbones, bones, mesh, verts_override, first_vert,
                      prim_words, nprims, output, output_capacity, gpu);
 }

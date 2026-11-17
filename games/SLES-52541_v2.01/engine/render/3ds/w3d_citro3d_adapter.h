@@ -49,6 +49,11 @@ typedef struct {
 /* GPU-lit conversion cache (HLE_3DS_LIT_CACHE): budget in bytes (0 = off); stats since the last call: hits, misses,
    hit vertices, miss vertices, skinned (uncacheable) vertices, evictions, allocation failures */
 void w3d_citro3d_lit_cache_config(size_t budget_bytes);
+/* by reference: with w3d_citro3d_cache_by_ref set, a cache hit of the GPU conversions leaves the output untouched and
+   sets w3d_citro3d_cache_hit to the stored vertices (NULL otherwise), valid until w3d_citro3d_cache_new_frame */
+extern int w3d_citro3d_cache_by_ref;
+extern const W3dC3dVertex *w3d_citro3d_cache_hit;
+void w3d_citro3d_cache_new_frame(void);
 /* static ranges as object-space vertices for the shader's objmode (HLE_3DS_GPU_LIGHT), cached with the lit ranges;
    the static cache stats (hits, misses, hit vertices, miss vertices) since the last call */
 int w3d_citro3d_convert_mesh_range_gpu(const W3dCam *camera, const float world[12], const W3dState *state,

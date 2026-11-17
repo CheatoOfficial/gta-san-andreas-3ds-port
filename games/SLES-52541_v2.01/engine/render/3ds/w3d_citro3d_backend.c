@@ -114,6 +114,7 @@ static void record_batch_light(unsigned first_vertex, unsigned vertex_count, uns
     }
     batch->screen = screen;
     batch->gpu_light = gpu_light;
+    batch->src = NULL;
 }
 
 int w3d_citro3d_init(void)
@@ -127,6 +128,7 @@ int w3d_citro3d_init(void)
     if (!gpu_lights) { w3d_citro3d_shutdown(); return 0; }
     /* converted non-skinned lit ranges kept across frames (adapter); the compact (Old 3DS) profile has no room */
     w3d_citro3d_lit_cache_config(hle_3ds_active_profile->compact ? 0u : 5u * 1024u * 1024u);
+    w3d_citro3d_cache_by_ref = 1;             /* cache hits are drawn from the cache (the present pass copies them) */
 #endif
     if (frame_vertices && temporary_vertices && frame_batches) return 1;
     w3d_citro3d_shutdown(); return 0;
@@ -142,6 +144,7 @@ void w3d_citro3d_shutdown(void)
 void w3d_citro3d_frame_reset(void)
 {
     if (!w3d_citro3d_init()) { frame_error=-1; return; }
+    w3d_citro3d_cache_new_frame();            /* the previous frame is presented: its by-reference entries are free */
     frame_vertex_count = 0;
     frame_static_verts = 0;
     static_cut_band = w3d_citro3d_static_cut_band(static_band_estimate,
@@ -368,6 +371,14 @@ void w3d_be_range(const W3dMeshView *mesh, const uint8_t *verts_override, uint32
             return;
         }
         frame_error = written;
+        return;
+    }
+    if (gpu_light >= 0 && w3d_citro3d_cache_hit) {
+        /* a vertex-cache hit taken by reference: nothing was written to the frame buffer */
+        frame_vertex_count = frame_start;
+        const unsigned before = frame_batch_count;
+        record_batch_light(frame_start, (unsigned)written, screen, gpu_light);
+        if (frame_batch_count > before) frame_batches[frame_batch_count - 1].src = w3d_citro3d_cache_hit;
         return;
     }
     frame_vertex_count = (unsigned)(out - frame_vertices) + (unsigned)written;

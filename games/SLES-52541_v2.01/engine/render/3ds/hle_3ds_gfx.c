@@ -650,6 +650,8 @@ void hle_3ds_gfx_present(void)
     }
 #endif
     input_triangles = source_count > 0 ? (unsigned)source_count / 3u : 0;
+    for (int b = 0; b < batch_count; ++b)             /* vertex-cache batches are not in the frame buffer */
+        if (batches[b].src) input_triangles += batches[b].vertex_count / 3u;
     drawn_triangles = dropped_w = 0;
     near_clipped_triangles = near_rejected_triangles = capacity_dropped_triangles = 0;
 #if HLE_3DS_TEXTURE_COLOR_DEBUG
@@ -657,6 +659,7 @@ void hle_3ds_gfx_present(void)
         const int probe_batches = batch_count < 8 ? batch_count : 8;
         for (int b = 0; b < probe_batches; ++b) {
             const W3dC3dBatch *batch = &batches[b];
+            if (batch->src) continue;                    /* a vertex-cache batch: not in source[] */
             unsigned end = batch->first_vertex + batch->vertex_count;
             if (end > (unsigned)source_count) end = (unsigned)source_count;
             float umin = 1.0e30f, umax = -1.0e30f, vmin = 1.0e30f, vmax = -1.0e30f;
@@ -692,7 +695,7 @@ void hle_3ds_gfx_present(void)
     for (int b = 0; b < batch_count; ++b) {
         const W3dC3dBatch *batch = &batches[b];
         unsigned source_end = batch->first_vertex + batch->vertex_count;
-        if (source_end > (unsigned)source_count) source_end = (unsigned)source_count;
+        if (!batch->src && source_end > (unsigned)source_count) source_end = (unsigned)source_count;
         const unsigned output_first = (unsigned)output_count;
 #if HLE_3DS_GPU_CLIP
         /* A batch whose conversion saw only finite values, and no vertex behind the near plane when fogged, would
@@ -700,7 +703,8 @@ void hle_3ds_gfx_present(void)
         if (gpu_batch_copies_as_is(batch->screen, batch->state.fog) && source_end > batch->first_vertex) {
             const unsigned n = (source_end - batch->first_vertex) / 3u * 3u;
             if (n <= W3D_C3D_FRAME_VERTEX_CAPACITY - (unsigned)output_count) {
-                memcpy(&vertex_buffer[output_count], &source[batch->first_vertex], (size_t)n * sizeof(*vertex_buffer));
+                memcpy(&vertex_buffer[output_count], batch->src ? batch->src : &source[batch->first_vertex],
+                       (size_t)n * sizeof(*vertex_buffer));   /* src: a vertex-cache entry, pinned for this frame */
                 output_count += (int)n;
                 drawn_triangles += n / 3u;
                 batch_ranges[b].first = output_first;

@@ -309,5 +309,62 @@ int main(void)
     }
     w3d_citro3d_lit_cache_config(0);
     printf("gpu static cases=%d mismatches=%d\n", static_cases, static_bad);
-    return bad != 0 || cache_bad != 0 || skin_bad != 0 || static_bad != 0;
+
+    /* by reference: a hit leaves the output alone and hands back the stored vertices; an entry served this way stays
+       (is not evicted) until the next frame even when the cache is over budget */
+    int ref_bad = 0;
+    {
+        W3dCam cam;
+        for (int i = 0; i < 16; i++) cam.proj[i] = rf();
+        cam.near_z = .3f; cam.far_z = 450; cam.fog_z = 100; cam.camera = 0;
+        float world[12];
+        for (int i = 0; i < 12; i++) world[i] = rf();
+        W3dState st;
+        memset(&st, 0, sizeof st);
+        st.uscale = 1;
+        enum { MESHES = 40, NV = 300 };
+        uint8_t *vbs[MESHES];
+        W3dMeshView mvs[MESHES];
+        uint32_t words[3] = {0x04000000u | (3u << 16) | NV, 0x0B000000u, 0};
+        for (int m = 0; m < MESHES; m++) {
+            vbs[m] = calloc(NV, 64);
+            for (int v = 0; v < NV; v++)
+                for (int k = 0; k < 14; k++) ((float *)(vbs[m] + v * 64))[k] = rf();
+            memset(&mvs[m], 0, sizeof mvs[m]);
+            mvs[m].verts = vbs[m]; mvs[m].nverts = NV; mvs[m].nprims = 2; mvs[m].stride = 64; mvs[m].fmt = W3D_FMT_UVF;
+        }
+        W3dGpuLight g;
+        /* budget for ~4 meshes: 300 verts x 44 bytes each */
+        w3d_citro3d_lit_cache_config((size_t)NV * sizeof(W3dC3dVertex) * 8u + 1024u);
+        w3d_citro3d_cache_by_ref = 1;
+        int r0 = w3d_citro3d_convert_mesh_range_gpu(&cam, world, &st, &mvs[0], NULL, 0, words, 2, r, 8000, &g);
+        (void)w3d_citro3d_take_screen();
+        if (r0 != NV || w3d_citro3d_cache_hit) { printf("by-ref: first draw not a miss\n"); ref_bad++; }
+        memset(a, 0x5A, sizeof(W3dC3dVertex) * NV);
+        int r1 = w3d_citro3d_convert_mesh_range_gpu(&cam, world, &st, &mvs[0], NULL, 0, words, 2, a, 8000, &g);
+        (void)w3d_citro3d_take_screen();
+        const W3dC3dVertex *pinned = w3d_citro3d_cache_hit;
+        if (r1 != NV || !pinned || memcmp(pinned, r, sizeof(W3dC3dVertex) * NV) || ((uint8_t *)a)[0] != 0x5A) {
+            printf("by-ref: hit not served by reference\n"); ref_bad++;
+        }
+        for (int m = 1; m < MESHES; m++) {      /* pressure in the same frame */
+            (void)w3d_citro3d_convert_mesh_range_gpu(&cam, world, &st, &mvs[m], NULL, 0, words, 2, b, 8000, &g);
+            (void)w3d_citro3d_take_screen();
+        }
+        int r2 = w3d_citro3d_convert_mesh_range_gpu(&cam, world, &st, &mvs[0], NULL, 0, words, 2, a, 8000, &g);
+        (void)w3d_citro3d_take_screen();
+        if (r2 != NV || w3d_citro3d_cache_hit != pinned || memcmp(pinned, r, sizeof(W3dC3dVertex) * NV)) {
+            printf("by-ref: pinned entry evicted within its frame\n"); ref_bad++;
+        }
+        w3d_citro3d_cache_new_frame();
+        for (int m = 1; m < MESHES; m++) {      /* next frame: the old entry may go */
+            (void)w3d_citro3d_convert_mesh_range_gpu(&cam, world, &st, &mvs[m], NULL, 0, words, 2, b, 8000, &g);
+            (void)w3d_citro3d_take_screen();
+        }
+        w3d_citro3d_cache_by_ref = 0;
+        w3d_citro3d_lit_cache_config(0);
+        for (int m = 0; m < MESHES; m++) free(vbs[m]);
+    }
+    printf("by-reference cache mismatches=%d\n", ref_bad);
+    return bad != 0 || cache_bad != 0 || skin_bad != 0 || static_bad != 0 || ref_bad != 0;
 }

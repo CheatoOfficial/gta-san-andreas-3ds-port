@@ -492,6 +492,15 @@ top screen at most 20 pixels differ by one level (GPU rounding). The remaining s
 vertices (twice: into the frame buffer, then the present pass); drawing straight from the cached buffers is the next
 step. Not measured on hardware.
 
+Vertex-cache hits by reference: a hit no longer copies the stored vertices into the frame buffer; the batch points
+at the cache entry (pinned until that frame is presented, so eviction skips it) and the present pass copies it into
+the GPU buffer once. Host test: a hit leaves the output untouched and returns the stored data, and a pinned entry
+survives cache pressure within its frame. Azahar, same frames, before -> after: static 7.9 -> 5.4, lit 20.0 -> 13.1,
+47.9 -> 37.4, 27.7 -> 21.8 ms; whole frame (between presents + wait + submit) 168.3 -> 159.0, 230.7 -> 218.1,
+188.1 -> 179.0, 176.1 -> 168.0, 150.7 -> 145.6 ms; captures pixel-identical. A 35-minute soak with the GPU paths
+(before this change) ran to virtual 735 s (17 366 iterations): no stall / fatal / clamp, cache steady at ~4 MiB,
+minimum linear free 5.9 MiB.
+
 Old 3DS (compact profile, no vertex cache), same route and frames, GPU lighting off (CPU lit/static reference) ->
 on (GPU lighting, skinning and static paths): lit conversion 69.5 -> 40.8, 93.7 -> 60.8, 74.7 -> 48.4 ms; static
 8.4 -> 5.5 ms; between presents 181.5 -> 149.9, 230.5 -> 194.7, 201.1 -> 172.0, 179.3 -> 153.9 ms. Captures: bottom
